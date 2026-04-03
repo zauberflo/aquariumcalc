@@ -7,13 +7,15 @@ from datetime import datetime
 st.set_page_config(page_title="AquaCalc Cloud 572", page_icon="🐠", layout="wide")
 
 # --- VERBINDUNG ZU GOOGLE SHEETS ---
-# Erfordert Eintrag in Streamlit Secrets: [connections.gsheets] -> spreadsheet = "URL"
 conn = st.connection("gsheets", type=GSheetsConnection)
+
+# DEINE TABELLEN-URL (Direkt im Code, um SpreadsheetNotFound zu vermeiden)
+SHEET_URL = "https://docs.google.com/spreadsheets/d/16YwX5iHpHM-yaSPV8KI9ds_FbPPdggaTvzrDZJevNMI/edit#gid=0"
 
 def load_data(sheet_name):
     try:
-        # Versuche Daten zu lesen, falls Blatt leer oder Fehler -> leeres DataFrame
-        data = conn.read(worksheet=sheet_name, ttl=0)
+        # Wir übergeben die URL hier explizit beim Lesen
+        data = conn.read(spreadsheet=SHEET_URL, worksheet=sheet_name, ttl=0)
         return data.dropna(how="all")
     except Exception:
         return pd.DataFrame(columns=["Datum", "Wert"])
@@ -58,7 +60,8 @@ with col_in1:
     if c1.button("💾 KH Speichern"):
         new_row = pd.DataFrame([{"Datum": str(kh_date), "Wert": kh_val}])
         updated_df = pd.concat([df_kh, new_row], ignore_index=True)
-        conn.update(worksheet="KH", data=updated_df)
+        # URL beim Update hinzufügen
+        conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=updated_df)
         st.cache_data.clear()
         st.success("KH gespeichert!")
         st.rerun()
@@ -66,7 +69,7 @@ with col_in1:
     if c2.button("🗑️ KH Letzten löschen"):
         if not df_kh.empty:
             updated_df = df_kh[:-1]
-            conn.update(worksheet="KH", data=updated_df)
+            conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=updated_df)
             st.cache_data.clear()
             st.rerun()
 
@@ -79,7 +82,8 @@ with col_in2:
     if c3.button("💾 Ca Speichern"):
         new_row = pd.DataFrame([{"Datum": str(ca_date), "Wert": ca_val}])
         updated_df = pd.concat([df_ca, new_row], ignore_index=True)
-        conn.update(worksheet="CA", data=updated_df)
+        # URL beim Update hinzufügen
+        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=updated_df)
         st.cache_data.clear()
         st.success("Ca gespeichert!")
         st.rerun()
@@ -87,7 +91,7 @@ with col_in2:
     if c4.button("🗑️ Ca Letzten löschen"):
         if not df_ca.empty:
             updated_df = df_ca[:-1]
-            conn.update(worksheet="CA", data=updated_df)
+            conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=updated_df)
             st.cache_data.clear()
             st.rerun()
 
