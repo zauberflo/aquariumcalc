@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 import os
 
-st.set_page_config(page_title="AquaCalc 572", page_icon="🐠")
+st.set_page_config(page_title="AquaCalc Pro", page_icon="🐠")
 
 # --- DATEI HANDLING ---
 KH_FILE = "data_kh.csv"
@@ -15,56 +15,62 @@ for f, cols in [(KH_FILE, ["Datum", "Wert"]), (CA_FILE, ["Datum", "Wert"])]:
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Setup")
-    # Voreinstellung auf 572 Liter
+    st.header("⚙️ Setup & Marken")
     volumen = st.number_input("Beckenvolumen (L)", value=572)
-    st.divider()
-    st.subheader("Aktuelle Dosierung (ml/Tag)")
-    curr_kh_ml = st.number_input("Aktuell KH Duo", value=0.0, format="%.1f")
-    curr_ca_ml = st.number_input("Aktuell Ca Duo", value=0.0, format="%.1f")
-    st.divider()
-    kh_factor = st.number_input("ml KH für +1° / 100L", value=10.0)
-    ca_factor = st.number_input("ml Ca für +10mg / 100L", value=14.0)
     
     st.divider()
-    if st.button("⚠️ Komplette Historie löschen"):
+    # Dynamische Marken-Eingabe
+    brand_kh = st.text_input("Name KH-Produkt", value="Oceamo Duo KH")
+    brand_ca = st.text_input("Name Ca-Produkt", value="Oceamo Duo Ca")
+    
+    st.divider()
+    st.subheader("Aktuelle Dosierung (ml/Tag)")
+    curr_kh_ml = st.number_input(f"Aktuell {brand_kh}", value=0.0, format="%.1f")
+    curr_ca_ml = st.number_input(f"Aktuell {brand_ca}", value=0.0, format="%.1f")
+    
+    st.divider()
+    st.subheader("Produkt-Konzentration")
+    kh_factor = st.number_input(f"ml {brand_kh} für +1° / 100L", value=10.0)
+    ca_factor = st.number_input(f"ml {brand_ca} für +10mg / 100L", value=14.0)
+    
+    st.divider()
+    if st.button("⚠️ Historie komplett löschen"):
         pd.DataFrame(columns=["Datum", "Wert"]).to_csv(KH_FILE, index=False)
         pd.DataFrame(columns=["Datum", "Wert"]).to_csv(CA_FILE, index=False)
-        st.warning("Alle Daten wurden gelöscht.")
         st.rerun()
 
-st.title("🌊 AquaCalc: 572L Edition")
+st.title("🌊 AquaCalc 572L")
 
 # --- EINGABE ---
 col_in1, col_in2 = st.columns(2)
 
 with col_in1:
-    st.subheader("🧪 KH Messung")
+    st.subheader(f"🧪 {brand_kh} Messung")
     kh_date = st.date_input("Datum KH", datetime.now(), key="d_kh")
-    kh_val = st.number_input("KH Wert", format="%.2f", key="kh_in")
-    btn_col1, btn_col2 = st.columns(2)
-    if btn_col1.button("KH Speichern"):
+    kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kh_in")
+    b1, b2 = st.columns(2)
+    if b1.button("💾 KH Speichern"):
         df = pd.read_csv(KH_FILE)
         new = pd.DataFrame([[kh_date, kh_val]], columns=["Datum", "Wert"])
         pd.concat([df, new]).to_csv(KH_FILE, index=False)
         st.rerun()
-    if btn_col2.button("KH Letzten löschen"):
+    if b2.button("🗑️ KH Letzten löschen"):
         df = pd.read_csv(KH_FILE)
         if not df.empty:
             df[:-1].to_csv(KH_FILE, index=False)
             st.rerun()
 
 with col_in2:
-    st.subheader("🧪 Ca Messung")
+    st.subheader(f"🧪 {brand_ca} Messung")
     ca_date = st.date_input("Datum Ca", datetime.now(), key="d_ca")
-    ca_val = st.number_input("Ca Wert (mg/l)", step=1, key="ca_in")
-    btn_col3, btn_col4 = st.columns(2)
-    if btn_col3.button("Ca Speichern"):
+    ca_val = st.number_input("Messwert (mg/l)", step=1, key="ca_in")
+    b3, b4 = st.columns(2)
+    if b3.button("💾 Ca Speichern"):
         df = pd.read_csv(CA_FILE)
         new = pd.DataFrame([[ca_date, ca_val]], columns=["Datum", "Wert"])
         pd.concat([df, new]).to_csv(CA_FILE, index=False)
         st.rerun()
-    if btn_col4.button("Ca Letzten löschen"):
+    if b4.button("🗑️ Ca Letzten löschen"):
         df = pd.read_csv(CA_FILE)
         if not df.empty:
             df[:-1].to_csv(CA_FILE, index=False)
@@ -91,13 +97,13 @@ def calc_dose(file, factor, current_ml, is_ca=False):
 kh_res, kh_hint = calc_dose(KH_FILE, kh_factor, curr_kh_ml)
 ca_res, ca_hint = calc_dose(CA_FILE, ca_factor, curr_ca_ml, is_ca=True)
 
-cols_res[0].metric("Neue KH Dosis", kh_res if kh_res else "---", kh_hint)
-cols_res[1].metric("Neue Ca Dosis", ca_res if ca_res else "---", ca_hint)
+cols_res[0].metric(f"Dosis {brand_kh}", kh_res if kh_res else "---", kh_hint)
+cols_res[1].metric(f"Dosis {brand_ca}", ca_res if ca_res else "---", ca_hint)
 
-# --- HISTORIE TABELLE ---
-with st.expander("📊 Historie einsehen"):
+# --- HISTORIE ---
+with st.expander("📊 Historie & Tabellen"):
     c1, c2 = st.columns(2)
-    c1.write("KH Daten")
-    c1.dataframe(pd.read_csv(KH_FILE))
-    c2.write("Ca Daten")
-    c2.dataframe(pd.read_csv(CA_FILE))
+    c1.write(f"Werte {brand_kh}")
+    c1.dataframe(pd.read_csv(KH_FILE), use_container_width=True)
+    c2.write(f"Werte {brand_ca}")
+    c2.dataframe(pd.read_csv(CA_FILE), use_container_width=True)
