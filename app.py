@@ -9,15 +9,16 @@ st.set_page_config(page_title="AquaCalc Cloud 572", page_icon="🐠", layout="wi
 # --- VERBINDUNG ZU GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# DEINE TABELLEN-URL (Direkt im Code, um SpreadsheetNotFound zu vermeiden)
-SHEET_URL = "https://docs.google.com/spreadsheets/d/16YwX5iHpHM-yaSPV8KI9ds_FbPPdggaTvzrDZJevNMI/edit#gid=0"
+# DEINE TABELLEN-URL (Ohne #gid am Ende für maximale Kompatibilität)
+SHEET_URL = "https://docs.google.com/spreadsheets/d/16YwX5iHpHM-yaSPV8KI9ds_FbPPdggaTvzrDZJevNMI/edit"
 
 def load_data(sheet_name):
     try:
-        # Wir übergeben die URL hier explizit beim Lesen
+        # Daten frisch laden (ttl=0 unterdrückt den Cache)
         data = conn.read(spreadsheet=SHEET_URL, worksheet=sheet_name, ttl=0)
         return data.dropna(how="all")
     except Exception:
+        # Falls das Blatt leer ist, erstelle ein leeres DataFrame mit Spaltenköpfen
         return pd.DataFrame(columns=["Datum", "Wert"])
 
 # --- SIDEBAR: SETUP ---
@@ -39,10 +40,9 @@ with st.sidebar:
     kh_factor = st.number_input(f"ml {brand_kh} für +1° / 100L", value=10.0)
     ca_factor = st.number_input(f"ml {brand_ca} für +10mg / 100L", value=14.0)
     
-    st.divider()
-    st.info("Hinweis: Daten werden direkt in Google Sheets gespeichert.")
+    st.info("Datenquelle: Google Sheets")
 
-# --- DATEN LADEN ---
+# --- DATEN INITIAL LADEN ---
 df_kh = load_data("KH")
 df_ca = load_data("CA")
 
@@ -54,14 +54,19 @@ col_in1, col_in2 = st.columns(2)
 with col_in1:
     st.subheader(f"🧪 {brand_kh} Messung")
     kh_date = st.date_input("Datum KH", datetime.now(), key="d_kh")
-    kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kh_val")
+    kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kh_in")
     
     c1, c2 = st.columns(2)
     if c1.button("💾 KH Speichern"):
-        new_row = pd.DataFrame([{"Datum": str(kh_date), "Wert": kh_val}])
-        updated_df = pd.concat([df_kh, new_row], ignore_index=True)
-        # URL beim Update hinzufügen
+        # 1. Aktuellen Stand frisch holen
+        current_df = load_data("KH")
+        # 2. Neue Zeile vorbereiten (Typ-Sicherheit!)
+        new_row = pd.DataFrame([{"Datum": str(kh_date), "Wert": float(kh_val)}])
+        # 3. Zusammenfügen
+        updated_df = pd.concat([current_df, new_row], ignore_index=True)
+        # 4. Hochladen
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=updated_df)
+        # 5. Aufräumen
         st.cache_data.clear()
         st.success("KH gespeichert!")
         st.rerun()
@@ -76,13 +81,13 @@ with col_in1:
 with col_in2:
     st.subheader(f"🧪 {brand_ca} Messung")
     ca_date = st.date_input("Datum Ca", datetime.now(), key="d_ca")
-    ca_val = st.number_input("Messwert (mg/l)", step=1, key="ca_val")
+    ca_val = st.number_input("Messwert (mg/l)", step=1, key="ca_in")
     
     c3, c4 = st.columns(2)
     if c3.button("💾 Ca Speichern"):
-        new_row = pd.DataFrame([{"Datum": str(ca_date), "Wert": ca_val}])
-        updated_df = pd.concat([df_ca, new_row], ignore_index=True)
-        # URL beim Update hinzufügen
+        current_df = load_data("CA")
+        new_row = pd.DataFrame([{"Datum": str(ca_date), "Wert": float(ca_val)}])
+        updated_df = pd.concat([current_df, new_row], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=updated_df)
         st.cache_data.clear()
         st.success("Ca gespeichert!")
@@ -101,49 +106,48 @@ res_col1, res_col2 = st.columns(2)
 
 # Berechnung Logik KH
 if len(df_kh) >= 2:
-    df_kh["Datum"] = pd.to_datetime(df_kh["Datum"])
-    df_kh = df_kh.sort_values("Datum")
-    last, prev = df_kh.iloc[-1], df_kh.iloc[-2]
+    # Datum konvertieren für Berechnung
+    df_kh_calc = df_kh.copy()
+    df_kh_calc["Datum"] = pd.to_datetime(df_kh_calc["Datum"])
+    df_kh_calc = df_kh_calc.sort_values("Datum")
+    last, prev = df_kh_calc.iloc[-1], df_kh_calc.iloc[-2]
     tage = (last["Datum"] - prev["Datum"]).days
+    
     if tage > 0:
         verbrauch_pro_tag = (prev["Wert"] - last["Wert"]) / tage
         korrektur = verbrauch_pro_tag * (volumen / 100) * kh_factor
-        res_col1.metric(f"Neue Dosis {brand_kh}", f"{round(curr_kh_ml + korrektur, 1)} ml/Tag", f"{round(korrektur, 1)} ml Anpassung")
+        res_col1.metric(f"Dosis {brand_kh}", f"{round(curr_kh_ml + korrektur, 1)} ml", f"{round(korrektur, 1)} ml Delta")
     else:
-        res_col1.warning("Zwei Messungen an unterschiedlichen Tagen nötig.")
+        res_col1.warning("Zwei Messungen an verschiedenen Tagen nötig.")
 else:
-    res_col1.info("Warte auf KH-Daten...")
+    res_col1.info("Warte auf KH-Daten (min. 2)...")
 
 # Berechnung Logik Ca
 if len(df_ca) >= 2:
-    df_ca["Datum"] = pd.to_datetime(df_ca["Datum"])
-    df_ca = df_ca.sort_values("Datum")
-    last, prev = df_ca.iloc[-1], df_ca.iloc[-2]
+    df_ca_calc = df_ca.copy()
+    df_ca_calc["Datum"] = pd.to_datetime(df_ca_calc["Datum"])
+    df_ca_calc = df_ca_calc.sort_values("Datum")
+    last, prev = df_ca_calc.iloc[-1], df_ca_calc.iloc[-2]
     tage = (last["Datum"] - prev["Datum"]).days
+    
     if tage > 0:
         verbrauch_pro_tag = (prev["Wert"] - last["Wert"]) / tage
         korrektur = (verbrauch_pro_tag / 10) * (volumen / 100) * ca_factor
-        res_col2.metric(f"Neue Dosis {brand_ca}", f"{round(curr_ca_ml + korrektur, 1)} ml/Tag", f"{round(korrektur, 1)} ml Anpassung")
+        res_col2.metric(f"Dosis {brand_ca}", f"{round(curr_ca_ml + korrektur, 1)} ml", f"{round(korrektur, 1)} ml Delta")
     else:
-        res_col2.warning("Zwei Messungen an unterschiedlichen Tagen nötig.")
+        res_col2.warning("Zwei Messungen an verschiedenen Tagen nötig.")
 else:
-    res_col2.info("Warte auf Ca-Daten...")
+    res_col2.info("Warte auf Ca-Daten (min. 2)...")
 
-# --- HISTORIE & CHARTS ---
+# --- HISTORIE ---
 st.divider()
-exp = st.expander("📊 Historie & Verlauf")
-with exp:
+with st.expander("📊 Historie & Verlauf"):
     h1, h2 = st.columns(2)
     if not df_kh.empty:
         h1.write(f"Verlauf {brand_kh}")
-        df_kh_plot = df_kh.copy()
-        df_kh_plot["Datum"] = pd.to_datetime(df_kh_plot["Datum"]).dt.date
-        h1.line_chart(df_kh_plot.set_index("Datum")["Wert"])
+        h1.line_chart(df_kh.set_index("Datum")["Wert"])
         h1.dataframe(df_kh, use_container_width=True)
-        
     if not df_ca.empty:
         h2.write(f"Verlauf {brand_ca}")
-        df_ca_plot = df_ca.copy()
-        df_ca_plot["Datum"] = pd.to_datetime(df_ca_plot["Datum"]).dt.date
-        h2.line_chart(df_ca_plot.set_index("Datum")["Wert"])
+        h2.line_chart(df_ca.set_index("Datum")["Wert"])
         h2.dataframe(df_ca, use_container_width=True)
