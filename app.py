@@ -2,31 +2,41 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
-
-# Pfad zu deinem neuen Logo auf GitHub (wichtig für das iPhone-Icon)
-# Wir nutzen die "raw"-Version, damit GitHub nur das reine Bild ausliefert.
-GITHUB_LOGO_URL = "https://raw.githubusercontent.com/zauberflo/aquariumcalc/main/logo.png"
+import base64
+import requests
 
 # App Konfiguration
 st.set_page_config(
     page_title="AquaCalc Cloud 572",
-    page_icon="🐠", # Dies bleibt das Favicon für Desktop-Browser
+    page_icon="🐠", 
     layout="wide"
 )
 
-# --- PROFI-TRICK: LOGO FÜR IPHONE HOME-BILDSCHIRM (Apple Touch Icon) ---
-# Dieser JavaScript-Code injiziert das Icon in den Header, den Streamlit nicht nativ anbietet.
-st.components.v1.html(
-    f"""
-    <script>
-        var link = window.parent.document.createElement('link');
-        link.rel = 'apple-touch-icon';
-        link.href = '{GITHUB_LOGO_URL}';
-        window.parent.document.getElementsByTagName('head')[0].appendChild(link);
-    </script>
-    """,
-    height=0,
-)
+# --- FUNKTION: LOGO EINBETTEN FÜR IPHONE ---
+def set_apple_icon(url):
+    try:
+        # Wir laden das Bild im Hintergrund und wandeln es in Text um
+        response = requests.get(url)
+        if response.status_code == 200:
+            b64_icon = base64.b64encode(response.content).decode()
+            # Wir injizieren das Icon direkt als Daten-String
+            st.components.v1.html(
+                f"""
+                <script>
+                    var link = window.parent.document.createElement('link');
+                    link.rel = 'apple-touch-icon';
+                    link.href = 'data:image/png;base64,{b64_icon}';
+                    window.parent.document.getElementsByTagName('head')[0].appendChild(link);
+                </script>
+                """,
+                height=0,
+            )
+    except:
+        pass
+
+# Dein Logo von GitHub laden und "festkrallen"
+GITHUB_LOGO_URL = "https://raw.githubusercontent.com/zauberflo/aquariumcalc/main/logo.png"
+set_apple_icon(GITHUB_LOGO_URL)
 
 # --- VERBINDUNG ZU GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
