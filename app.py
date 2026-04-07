@@ -14,21 +14,18 @@ def get_logo():
         response = requests.get(GITHUB_LOGO_URL)
         return Image.open(BytesIO(response.content))
     except:
-        return "🐠" # Fallback falls GitHub nicht erreichbar ist
+        return "🐠"
 
 logo_img = get_logo()
 
 # --- APP KONFIGURATION ---
-# Wir setzen das Bild direkt als page_icon. 
-# iOS nutzt oft das Favicon als Notlösung für den Home-Bildschirm.
 st.set_page_config(
     page_title="AquaCalc Cloud 572",
     page_icon=logo_img, 
     layout="wide"
 )
 
-# --- DER "SICHERHEITS-HEADER" ---
-# Wir lassen den JS-Teil drin, aber vereinfacht
+# --- IPHONE HEADER INJEKTION ---
 st.components.v1.html(
     f"""
     <script>
@@ -36,13 +33,6 @@ st.components.v1.html(
         link.rel = 'apple-touch-icon';
         link.href = '{GITHUB_LOGO_URL}';
         window.parent.document.getElementsByTagName('head')[0].appendChild(link);
-        
-        // Zweiter Versuch für Android/Chrome
-        var link2 = window.parent.document.createElement('link');
-        link2.rel = 'icon';
-        link2.sizes = '192x192';
-        link2.href = '{GITHUB_LOGO_URL}';
-        window.parent.document.getElementsByTagName('head')[0].appendChild(link2);
     </script>
     """,
     height=0,
@@ -50,42 +40,73 @@ st.components.v1.html(
 
 # --- VERBINDUNG ZU GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
-
-# DEINE TABELLEN-URL (Ohne #gid am Ende)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/16YwX5iHpHM-yaSPV8KI9ds_FbPPdggaTvzrDZJevNMI/edit"
 
 def load_data(sheet_name):
     try:
-        # Daten frisch laden (ttl=0 unterdrückt den Cache für Live-Daten)
         data = conn.read(spreadsheet=SHEET_URL, worksheet=sheet_name, ttl=0)
         return data.dropna(how="all")
     except Exception:
-        # Falls das Blatt leer ist, erstelle ein leeres DataFrame mit Spaltenköpfen
-        return pd.DataFrame(columns=["Datum", "Wert"])
+        return pd.DataFrame()
+
+# --- SETUP DATEN LADEN & INITIALISIEREN ---
+df_setup = load_data("Setup")
+
+# Standardwerte (Fallbacks)
+setup_values = {
+    "Volumen": 572.0, "KH_Brand": "Oceamo Duo KH", "CA_Brand": "Oceamo Duo Ca",
+    "KH_Dosis": 0.0, "CA_Dosis": 0.0, "KH_Faktor": 10.0, "CA_Faktor": 14.0
+}
+
+# Werte aus Tabelle in Dictionary laden
+if not df_setup.empty and "Parameter" in df_setup.columns:
+    for _, row in df_setup.iterrows():
+        p = row["Parameter"]
+        w = row["Wert"]
+        if p in setup_values:
+            # Versuch Zahl zu konvertieren, sonst String behalten
+            try:
+                setup_values[p] = float(w) if str(w).replace('.','',1).isdigit() else w
+            except:
+                setup_values[p] = w
 
 # --- SIDEBAR: SETUP ---
 with st.sidebar:
     st.header("⚙️ Aquarium Setup")
-    volumen = st.number_input("Beckenvolumen (Netto L)", value=572)
+    
+    s_volumen = st.number_input("Beckenvolumen (Netto L)", value=float(setup_values["Volumen"]))
     
     st.divider()
-    brand_kh = st.text_input("Marke KH-Lösung", value="Oceamo Duo KH")
-    brand_ca = st.text_input("Marke Ca-Lösung", value="Oceamo Duo Ca")
+    s_brand_kh = st.text_input("Marke KH-Lösung", value=str(setup_values["KH_Brand"]))
+    s_brand_ca = st.text_input("Marke Ca-Lösung", value=str(setup_values["CA_Brand"]))
     
     st.divider()
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    st.caption("Was deine Pumpe aktuell tatsächlich dosiert:")
-    curr_kh_ml = st.number_input(f"Dosierung {brand_kh}", value=0.0, format="%.1f")
-    curr_ca_ml = st.number_input(f"Dosierung {brand_ca}", value=0.0, format="%.1f")
+    s_curr_kh_ml = st.number_input(f"Dosierung {s_brand_kh}", value=float(setup_values["KH_Dosis"]), format="%.1f")
+    s_curr_ca_ml = st.number_input(f"Dosierung {s_brand_ca}", value=float(setup_values["CA_Dosis"]), format="%.1f")
     
     st.divider()
     st.subheader("Produkt-Parameter")
-    kh_factor = st.number_input(f"ml {brand_kh} für +1° / 100L", value=10.0)
-    ca_factor = st.number_input(f"ml {brand_ca} für +10mg / 100L", value=14.0)
+    s_kh_factor = st.number_input(f"ml {s_brand_kh} für +1° / 100L", value=float(setup_values["KH_Faktor"]))
+    s_ca_factor = st.number_input(f"ml {s_brand_ca} für +10mg / 100L", value=float(setup_values["CA_Faktor"]))
     
-    st.info("Datenquelle: Google Sheets")
+    if st.button("💾 Setup dauerhaft speichern"):
+        new_setup = pd.DataFrame({
+            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor"],
+            "Wert": [s_volumen, s_brand_kh, s_brand_ca, s_curr_kh_ml, s_curr_ca_ml, s_kh_factor, s_ca_factor]
+        })
+        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
+        st.cache_data.clear()
+        st.success("Setup in Cloud gespeichert!")
+        st.rerun()
 
-# --- DATEN INITIAL LADEN ---
+# Variablen für Berechnungen zuweisen
+volumen = s_volumen
+brand_kh, brand_ca = s_brand_kh, s_brand_ca
+curr_kh_ml, curr_ca_ml = s_curr_kh_ml, s_curr_ca_ml
+kh_factor, ca_factor = s_kh_factor, s_ca_factor
+
+# --- HAUPTDATEN LADEN ---
 df_kh = load_data("KH")
 df_ca = load_data("CA")
 
@@ -143,7 +164,7 @@ st.divider()
 res_col1, res_col2 = st.columns(2)
 
 # Berechnung KH
-if len(df_kh) >= 2:
+if df_kh is not None and len(df_kh) >= 2:
     df_kh_calc = df_kh.copy()
     df_kh_calc["Datum"] = pd.to_datetime(df_kh_calc["Datum"])
     df_kh_calc = df_kh_calc.sort_values("Datum")
@@ -151,16 +172,9 @@ if len(df_kh) >= 2:
     tage = (last["Datum"] - prev["Datum"]).days
     
     if tage > 0:
-        # 1. Verbrauch aus Messdifferenz (dKH/Tag)
         verbrauch_messung = (prev["Wert"] - last["Wert"]) / tage
-        
-        # 2. Äquivalent der aktuellen Dosierung in dKH/Tag
         dosis_in_kh = curr_kh_ml / (volumen / 100) / kh_factor
-        
-        # 3. Gesamtverbrauch des Beckens
         gesamt_verbrauch_kh = verbrauch_messung + dosis_in_kh
-        
-        # Korrekturwert für die neue Dosierung in ml
         korrektur = verbrauch_messung * (volumen / 100) * kh_factor
         
         res_col1.metric(f"Empfohlene Dosis {brand_kh}", f"{round(curr_kh_ml + korrektur, 1)} ml", f"{round(korrektur, 1)} ml Delta")
@@ -172,7 +186,7 @@ else:
     res_col1.info("Warte auf KH-Daten (min. 2)...")
 
 # Berechnung Calcium
-if len(df_ca) >= 2:
+if df_ca is not None and len(df_ca) >= 2:
     df_ca_calc = df_ca.copy()
     df_ca_calc["Datum"] = pd.to_datetime(df_ca_calc["Datum"])
     df_ca_calc = df_ca_calc.sort_values("Datum")
@@ -180,15 +194,9 @@ if len(df_ca) >= 2:
     tage = (last["Datum"] - prev["Datum"]).days
     
     if tage > 0:
-        # 1. Verbrauch aus Messdifferenz (mg/l / Tag)
         verbrauch_messung_ca = (prev["Wert"] - last["Wert"]) / tage
-        
-        # 2. Äquivalent der aktuellen Dosierung in mg/l / Tag
         dosis_in_ca = curr_ca_ml / (volumen / 100) / (ca_factor / 10)
-        
-        # 3. Gesamtverbrauch des Beckens
         gesamt_verbrauch_ca = verbrauch_messung_ca + dosis_in_ca
-        
         korrektur_ca = (verbrauch_messung_ca / 10) * (volumen / 100) * ca_factor
         
         res_col2.metric(f"Empfohlene Dosis {brand_ca}", f"{round(curr_ca_ml + korrektur_ca, 1)} ml", f"{round(korrektur_ca, 1)} ml Delta")
