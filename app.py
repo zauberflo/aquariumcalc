@@ -9,12 +9,12 @@ st.set_page_config(page_title="AquaCalc Cloud 572", page_icon="🐠", layout="wi
 # --- VERBINDUNG ZU GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# DEINE TABELLEN-URL (Ohne #gid am Ende für maximale Kompatibilität)
+# DEINE TABELLEN-URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/16YwX5iHpHM-yaSPV8KI9ds_FbPPdggaTvzrDZJevNMI/edit"
 
 def load_data(sheet_name):
     try:
-        # Daten frisch laden (ttl=0 unterdrückt den Cache)
+        # Daten frisch laden (ttl=0 unterdrückt den Cache für Live-Daten)
         data = conn.read(spreadsheet=SHEET_URL, worksheet=sheet_name, ttl=0)
         return data.dropna(how="all")
     except Exception:
@@ -32,8 +32,9 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    curr_kh_ml = st.number_input(f"Aktuell {brand_kh}", value=0.0, format="%.1f")
-    curr_ca_ml = st.number_input(f"Aktuell {brand_ca}", value=0.0, format="%.1f")
+    st.caption("Was deine Pumpe aktuell tatsächlich dosiert:")
+    curr_kh_ml = st.number_input(f"Dosierung {brand_kh}", value=0.0, format="%.1f")
+    curr_ca_ml = st.number_input(f"Dosierung {brand_ca}", value=0.0, format="%.1f")
     
     st.divider()
     st.subheader("Produkt-Parameter")
@@ -58,15 +59,10 @@ with col_in1:
     
     c1, c2 = st.columns(2)
     if c1.button("💾 KH Speichern"):
-        # 1. Aktuellen Stand frisch holen
         current_df = load_data("KH")
-        # 2. Neue Zeile vorbereiten (Typ-Sicherheit!)
         new_row = pd.DataFrame([{"Datum": str(kh_date), "Wert": float(kh_val)}])
-        # 3. Zusammenfügen
         updated_df = pd.concat([current_df, new_row], ignore_index=True)
-        # 4. Hochladen
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=updated_df)
-        # 5. Aufräumen
         st.cache_data.clear()
         st.success("KH gespeichert!")
         st.rerun()
@@ -104,9 +100,8 @@ with col_in2:
 st.divider()
 res_col1, res_col2 = st.columns(2)
 
-# Berechnung Logik KH
+# --- BERECHNUNG KH ---
 if len(df_kh) >= 2:
-    # Datum konvertieren für Berechnung
     df_kh_calc = df_kh.copy()
     df_kh_calc["Datum"] = pd.to_datetime(df_kh_calc["Datum"])
     df_kh_calc = df_kh_calc.sort_values("Datum")
@@ -114,15 +109,27 @@ if len(df_kh) >= 2:
     tage = (last["Datum"] - prev["Datum"]).days
     
     if tage > 0:
-        verbrauch_pro_tag = (prev["Wert"] - last["Wert"]) / tage
-        korrektur = verbrauch_pro_tag * (volumen / 100) * kh_factor
-        res_col1.metric(f"Dosis {brand_kh}", f"{round(curr_kh_ml + korrektur, 1)} ml", f"{round(korrektur, 1)} ml Delta")
+        # 1. Verbrauch aus Messdifferenz (dKH/Tag)
+        verbrauch_messung = (prev["Wert"] - last["Wert"]) / tage
+        
+        # 2. Äquivalent der aktuellen Dosierung in dKH/Tag
+        dosis_in_kh = curr_kh_ml / (volumen / 100) / kh_factor
+        
+        # 3. Gesamtverbrauch des Beckens
+        gesamt_verbrauch_kh = verbrauch_messung + dosis_in_kh
+        
+        # Korrekturwert für die neue Dosierung in ml
+        korrektur = verbrauch_messung * (volumen / 100) * kh_factor
+        
+        res_col1.metric(f"Empfohlene Dosis {brand_kh}", f"{round(curr_kh_ml + korrektur, 1)} ml", f"{round(korrektur, 1)} ml Delta")
+        res_col1.subheader(f"📉 Realer Verbrauch: {round(gesamt_verbrauch_kh, 3)} dKH/Tag")
+        res_col1.caption(f"Aktuelle Dosis deckt {round(dosis_in_kh, 3)} dKH ab.")
     else:
         res_col1.warning("Zwei Messungen an verschiedenen Tagen nötig.")
 else:
     res_col1.info("Warte auf KH-Daten (min. 2)...")
 
-# Berechnung Logik Ca
+# --- BERECHNUNG CA ---
 if len(df_ca) >= 2:
     df_ca_calc = df_ca.copy()
     df_ca_calc["Datum"] = pd.to_datetime(df_ca_calc["Datum"])
@@ -131,9 +138,20 @@ if len(df_ca) >= 2:
     tage = (last["Datum"] - prev["Datum"]).days
     
     if tage > 0:
-        verbrauch_pro_tag = (prev["Wert"] - last["Wert"]) / tage
-        korrektur = (verbrauch_pro_tag / 10) * (volumen / 100) * ca_factor
-        res_col2.metric(f"Dosis {brand_ca}", f"{round(curr_ca_ml + korrektur, 1)} ml", f"{round(korrektur, 1)} ml Delta")
+        # 1. Verbrauch aus Messdifferenz (mg/l / Tag)
+        verbrauch_messung_ca = (prev["Wert"] - last["Wert"]) / tage
+        
+        # 2. Äquivalent der aktuellen Dosierung in mg/l / Tag
+        dosis_in_ca = curr_ca_ml / (volumen / 100) / (ca_factor / 10)
+        
+        # 3. Gesamtverbrauch des Beckens
+        gesamt_verbrauch_ca = verbrauch_messung_ca + dosis_in_ca
+        
+        korrektur_ca = (verbrauch_messung_ca / 10) * (volumen / 100) * ca_factor
+        
+        res_col2.metric(f"Empfohlene Dosis {brand_ca}", f"{round(curr_ca_ml + korrektur_ca, 1)} ml", f"{round(korrektur_ca, 1)} ml Delta")
+        res_col2.subheader(f"📉 Realer Verbrauch: {round(gesamt_verbrauch_ca, 2)} mg/l / Tag")
+        res_col2.caption(f"Aktuelle Dosis deckt {round(dosis_in_ca, 2)} mg/l ab.")
     else:
         res_col2.warning("Zwei Messungen an verschiedenen Tagen nötig.")
 else:
