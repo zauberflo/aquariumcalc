@@ -2,41 +2,51 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
-import base64
 import requests
+from PIL import Image
+from io import BytesIO
 
-# App Konfiguration
+# --- LOGO LADEN ---
+GITHUB_LOGO_URL = "https://raw.githubusercontent.com/zauberflo/aquariumcalc/main/logo.png"
+
+def get_logo():
+    try:
+        response = requests.get(GITHUB_LOGO_URL)
+        return Image.open(BytesIO(response.content))
+    except:
+        return "🐠" # Fallback falls GitHub nicht erreichbar ist
+
+logo_img = get_logo()
+
+# --- APP KONFIGURATION ---
+# Wir setzen das Bild direkt als page_icon. 
+# iOS nutzt oft das Favicon als Notlösung für den Home-Bildschirm.
 st.set_page_config(
     page_title="AquaCalc Cloud 572",
-    page_icon="🐠", 
+    page_icon=logo_img, 
     layout="wide"
 )
 
-# --- FUNKTION: LOGO EINBETTEN FÜR IPHONE ---
-def set_apple_icon(url):
-    try:
-        # Wir laden das Bild im Hintergrund und wandeln es in Text um
-        response = requests.get(url)
-        if response.status_code == 200:
-            b64_icon = base64.b64encode(response.content).decode()
-            # Wir injizieren das Icon direkt als Daten-String
-            st.components.v1.html(
-                f"""
-                <script>
-                    var link = window.parent.document.createElement('link');
-                    link.rel = 'apple-touch-icon';
-                    link.href = 'data:image/png;base64,{b64_icon}';
-                    window.parent.document.getElementsByTagName('head')[0].appendChild(link);
-                </script>
-                """,
-                height=0,
-            )
-    except:
-        pass
-
-# Dein Logo von GitHub laden und "festkrallen"
-GITHUB_LOGO_URL = "https://raw.githubusercontent.com/zauberflo/aquariumcalc/main/logo.png"
-set_apple_icon(GITHUB_LOGO_URL)
+# --- DER "SICHERHEITS-HEADER" ---
+# Wir lassen den JS-Teil drin, aber vereinfacht
+st.components.v1.html(
+    f"""
+    <script>
+        var link = window.parent.document.createElement('link');
+        link.rel = 'apple-touch-icon';
+        link.href = '{GITHUB_LOGO_URL}';
+        window.parent.document.getElementsByTagName('head')[0].appendChild(link);
+        
+        // Zweiter Versuch für Android/Chrome
+        var link2 = window.parent.document.createElement('link');
+        link2.rel = 'icon';
+        link2.sizes = '192x192';
+        link2.href = '{GITHUB_LOGO_URL}';
+        window.parent.document.getElementsByTagName('head')[0].appendChild(link2);
+    </script>
+    """,
+    height=0,
+)
 
 # --- VERBINDUNG ZU GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
