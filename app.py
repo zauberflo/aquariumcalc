@@ -3,13 +3,35 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
+# Pfad zu deinem neuen Logo auf GitHub (wichtig für das iPhone-Icon)
+# Wir nutzen die "raw"-Version, damit GitHub nur das reine Bild ausliefert.
+GITHUB_LOGO_URL = "https://raw.githubusercontent.com/zauberflo/aquariumcalc/main/logo.png"
+
 # App Konfiguration
-st.set_page_config(page_title="AquaCalc Cloud 572", page_icon="🐠", layout="wide")
+st.set_page_config(
+    page_title="AquaCalc Cloud 572",
+    page_icon="🐠", # Dies bleibt das Favicon für Desktop-Browser
+    layout="wide"
+)
+
+# --- PROFI-TRICK: LOGO FÜR IPHONE HOME-BILDSCHIRM (Apple Touch Icon) ---
+# Dieser JavaScript-Code injiziert das Icon in den Header, den Streamlit nicht nativ anbietet.
+st.components.v1.html(
+    f"""
+    <script>
+        var link = window.parent.document.createElement('link');
+        link.rel = 'apple-touch-icon';
+        link.href = '{GITHUB_LOGO_URL}';
+        window.parent.document.getElementsByTagName('head')[0].appendChild(link);
+    </script>
+    """,
+    height=0,
+)
 
 # --- VERBINDUNG ZU GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# DEINE TABELLEN-URL
+# DEINE TABELLEN-URL (Ohne #gid am Ende)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/16YwX5iHpHM-yaSPV8KI9ds_FbPPdggaTvzrDZJevNMI/edit"
 
 def load_data(sheet_name):
@@ -100,7 +122,7 @@ with col_in2:
 st.divider()
 res_col1, res_col2 = st.columns(2)
 
-# --- BERECHNUNG KH ---
+# Berechnung KH
 if len(df_kh) >= 2:
     df_kh_calc = df_kh.copy()
     df_kh_calc["Datum"] = pd.to_datetime(df_kh_calc["Datum"])
@@ -129,7 +151,7 @@ if len(df_kh) >= 2:
 else:
     res_col1.info("Warte auf KH-Daten (min. 2)...")
 
-# --- BERECHNUNG CA ---
+# Berechnung Calcium
 if len(df_ca) >= 2:
     df_ca_calc = df_ca.copy()
     df_ca_calc["Datum"] = pd.to_datetime(df_ca_calc["Datum"])
