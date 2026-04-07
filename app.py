@@ -52,20 +52,25 @@ def load_data(sheet_name):
 # --- SETUP DATEN LADEN & INITIALISIEREN ---
 df_setup = load_data("Setup")
 
-# Standardwerte (Fallbacks)
+# Standardwerte (Fallbacks), falls Setup leer ist
 setup_values = {
-    "Volumen": 572.0, "KH_Brand": "Oceamo Duo KH", "CA_Brand": "Oceamo Duo Ca",
-    "KH_Dosis": 0.0, "CA_Dosis": 0.0, "KH_Faktor": 10.0, "CA_Faktor": 14.0
+    "Volumen": 572.0, 
+    "KH_Brand": "Oceamo Duo KH", 
+    "CA_Brand": "Oceamo Duo Ca",
+    "KH_Dosis": 0.0, 
+    "CA_Dosis": 0.0, 
+    "KH_Faktor": 10.0, 
+    "CA_Faktor": 14.0
 }
 
-# Werte aus Tabelle übernehmen (mit Bereinigung von Leerzeichen)
+# Werte aus Tabelle übernehmen
 if not df_setup.empty and "Parameter" in df_setup.columns:
     for _, row in df_setup.iterrows():
         p = str(row["Parameter"]).strip()
         w = row["Wert"]
-        if p in setup_values:
+        if p in setup_values and pd.notna(w):
             try:
-                # Sicherstellen, dass Zahlen als Floats interpretiert werden
+                # Nur übernehmen, wenn es eine gültige Zahl/Text ist
                 setup_values[p] = float(w) if str(w).replace('.','',1).isdigit() else w
             except:
                 setup_values[p] = w
@@ -87,8 +92,9 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Produkt-Parameter")
-    s_kh_factor = st.number_input(f"ml {s_brand_kh} für +1° / 100L", value=float(setup_values["KH_Faktor"]))
-    s_ca_factor = st.number_input(f"ml {s_brand_ca} für +10mg / 100L", value=float(setup_values["CA_Faktor"]))
+    # Hier erzwingen wir ein Minimum von 0.1, um Division durch Null zu vermeiden
+    s_kh_factor = st.number_input(f"ml {s_brand_kh} für +1° / 100L", value=max(0.1, float(setup_values["KH_Faktor"])))
+    s_ca_factor = st.number_input(f"ml {s_brand_ca} für +10mg / 100L", value=max(0.1, float(setup_values["CA_Faktor"])))
     
     if st.button("💾 Setup dauerhaft speichern"):
         new_setup = pd.DataFrame({
@@ -100,7 +106,7 @@ with st.sidebar:
         st.success("Setup in Cloud gespeichert!")
         st.rerun()
 
-# Aktuelle Variablen für die Berechnung
+# Variablen für Berechnungen zuweisen
 volumen = s_volumen
 brand_kh, brand_ca = s_brand_kh, s_brand_ca
 curr_kh_ml, curr_ca_ml = s_curr_kh_ml, s_curr_ca_ml
@@ -165,6 +171,9 @@ res_col1, res_col2 = st.columns(2)
 
 # Hilfsfunktion für saubere Berechnung
 def calc_consumption(df, current_dosis, vol, factor, unit_factor=1):
+    # Sicherstellen, dass factor nicht 0 ist
+    safe_factor = factor if factor > 0 else (10.0 if unit_factor == 1 else 14.0)
+    
     if df is not None and len(df) >= 2:
         temp_df = df.copy()
         temp_df["Datum"] = pd.to_datetime(temp_df["Datum"], errors='coerce')
@@ -175,14 +184,10 @@ def calc_consumption(df, current_dosis, vol, factor, unit_factor=1):
             last, prev = temp_df.iloc[-1], temp_df.iloc[-2]
             days = (last["Datum"] - prev["Datum"]).days
             if days > 0:
-                # Abfall laut Messung pro Tag
                 drop_per_day = (prev["Wert"] - last["Wert"]) / days
-                # Aktuelle Dosis umgerechnet in dKH/mg pro Tag
-                dosis_impact = current_dosis / (vol / 100) / (factor / unit_factor)
-                # Realer Gesamtverbrauch
+                dosis_impact = current_dosis / (vol / 100) / (safe_factor / unit_factor)
                 total_usage = drop_per_day + dosis_impact
-                # Notwendige Anpassung in ml
-                delta_ml = drop_per_day * (vol / 100) * (factor / unit_factor)
+                delta_ml = drop_per_day * (vol / 100) * (safe_factor / unit_factor)
                 return round(total_usage, 3), round(delta_ml, 1), round(dosis_impact, 3)
     return None, None, None
 
@@ -193,16 +198,16 @@ if usage_kh is not None:
     res_col1.subheader(f"📉 Realer Verbrauch: {usage_kh} dKH/Tag")
     res_col1.caption(f"Aktuelle Dosis deckt {impact_kh} dKH ab.")
 else:
-    res_col1.info("Warte auf genügend KH-Daten...")
+    res_col1.info("Warte auf genügend KH-Daten (mind. 2 Messungen)...")
 
-# Calcium Berechnung (Faktor durch 10 wegen mg/l vs 10mg Schritten)
+# Calcium Berechnung
 usage_ca, correction_ca, impact_ca = calc_consumption(df_ca, curr_ca_ml, volumen, ca_factor, unit_factor=10)
 if usage_ca is not None:
     res_col2.metric(f"Dosis {brand_ca}", f"{round(curr_ca_ml + correction_ca, 1)} ml", f"{correction_ca} ml Delta")
     res_col2.subheader(f"📉 Realer Verbrauch: {usage_ca} mg/l / Tag")
     res_col2.caption(f"Aktuelle Dosis deckt {impact_ca} mg/l ab.")
 else:
-    res_col2.info("Warte auf genügend Ca-Daten...")
+    res_col2.info("Warte auf genügend Ca-Daten (mind. 2 Messungen)...")
 
 # --- HISTORIE ---
 st.divider()
