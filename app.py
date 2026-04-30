@@ -52,25 +52,19 @@ def load_data(sheet_name):
 # --- SETUP DATEN LADEN & INITIALISIEREN ---
 df_setup = load_data("Setup")
 
-# Standardwerte (Fallbacks), falls Setup leer ist
+# Standardwerte (Fallbacks) inklusive Speicherplätzen für Verbrauch
 setup_values = {
-    "Volumen": 572.0, 
-    "KH_Brand": "Oceamo Duo KH", 
-    "CA_Brand": "Oceamo Duo Ca",
-    "KH_Dosis": 0.0, 
-    "CA_Dosis": 0.0, 
-    "KH_Faktor": 10.0, 
-    "CA_Faktor": 14.0
+    "Volumen": 572.0, "KH_Brand": "Oceamo Duo KH", "CA_Brand": "Oceamo Duo Ca",
+    "KH_Dosis": 0.0, "CA_Dosis": 0.0, "KH_Faktor": 10.0, "CA_Faktor": 14.0,
+    "KH_Verbrauch": 0.0, "CA_Verbrauch": 0.0
 }
 
-# Werte aus Tabelle übernehmen
 if not df_setup.empty and "Parameter" in df_setup.columns:
     for _, row in df_setup.iterrows():
         p = str(row["Parameter"]).strip()
         w = row["Wert"]
         if p in setup_values and pd.notna(w):
             try:
-                # Nur übernehmen, wenn es eine gültige Zahl/Text ist
                 setup_values[p] = float(w) if str(w).replace('.','',1).isdigit() else w
             except:
                 setup_values[p] = w
@@ -78,7 +72,6 @@ if not df_setup.empty and "Parameter" in df_setup.columns:
 # --- SIDEBAR: SETUP ---
 with st.sidebar:
     st.header("⚙️ Aquarium Setup")
-    
     s_volumen = st.number_input("Beckenvolumen (Netto L)", value=float(setup_values["Volumen"]))
     
     st.divider()
@@ -92,27 +85,20 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Produkt-Parameter")
-    # Hier erzwingen wir ein Minimum von 0.1, um Division durch Null zu vermeiden
-    s_kh_factor = st.number_input(f"ml {s_brand_kh} für +1° / 100L", value=max(0.1, float(setup_values["KH_Faktor"])))
-    s_ca_factor = st.number_input(f"ml {s_brand_ca} für +10mg / 100L", value=max(0.1, float(setup_values["CA_Faktor"])))
+    s_kh_factor = st.number_input(f"ml {s_brand_kh} für +1° / 100L", value=float(setup_values["KH_Faktor"]))
+    s_ca_factor = st.number_input(f"ml {s_brand_ca} für +10mg / 100L", value=float(setup_values["CA_Faktor"]))
     
-    if st.button("💾 Setup dauerhaft speichern"):
+    if st.button("💾 Setup & Dosis speichern"):
         new_setup = pd.DataFrame({
-            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor"],
-            "Wert": [s_volumen, s_brand_kh, s_brand_ca, s_curr_kh_ml, s_curr_ca_ml, s_kh_factor, s_ca_factor]
+            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
+            "Wert": [s_volumen, s_brand_kh, s_brand_ca, s_curr_kh_ml, s_curr_ca_ml, s_kh_factor, s_ca_factor, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
         st.cache_data.clear()
-        st.success("Setup in Cloud gespeichert!")
+        st.success("Gespeichert!")
         st.rerun()
 
-# Variablen für Berechnungen zuweisen
-volumen = s_volumen
-brand_kh, brand_ca = s_brand_kh, s_brand_ca
-curr_kh_ml, curr_ca_ml = s_curr_kh_ml, s_curr_ca_ml
-kh_factor, ca_factor = s_kh_factor, s_ca_factor
-
-# --- HAUPTDATEN LADEN ---
+# --- DATEN LADEN ---
 df_kh = load_data("KH")
 df_ca = load_data("CA")
 
@@ -120,102 +106,86 @@ st.title("🌊 Zauberflos AquaCalc Cloud")
 
 # --- EINGABEBEREICH ---
 col_in1, col_in2 = st.columns(2)
-
 with col_in1:
-    st.subheader(f"🧪 {brand_kh} Messung")
-    kh_date = st.date_input("Datum KH", datetime.now(), key="d_kh")
+    st.subheader(f"🧪 {s_brand_kh} Messung")
     kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kh_in")
-    
-    c1, c2 = st.columns(2)
-    if c1.button("💾 KH Speichern"):
-        current_df = load_data("KH")
-        new_row = pd.DataFrame([{"Datum": str(kh_date), "Wert": float(kh_val)}])
-        updated_df = pd.concat([current_df, new_row], ignore_index=True)
-        conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=updated_df)
+    if st.button("💾 KH Speichern"):
+        new_row = pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(kh_val)}])
+        conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=pd.concat([df_kh, new_row], ignore_index=True))
         st.cache_data.clear()
-        st.success("KH gespeichert!")
         st.rerun()
-    
-    if c2.button("🗑️ KH Letzten löschen"):
-        if not df_kh.empty:
-            updated_df = df_kh[:-1]
-            conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=updated_df)
-            st.cache_data.clear()
-            st.rerun()
 
 with col_in2:
-    st.subheader(f"🧪 {brand_ca} Messung")
-    ca_date = st.date_input("Datum Ca", datetime.now(), key="d_ca")
+    st.subheader(f"🧪 {s_brand_ca} Messung")
     ca_val = st.number_input("Messwert (mg/l)", step=1, key="ca_in")
-    
-    c3, c4 = st.columns(2)
-    if c3.button("💾 Ca Speichern"):
-        current_df = load_data("CA")
-        new_row = pd.DataFrame([{"Datum": str(ca_date), "Wert": float(ca_val)}])
-        updated_df = pd.concat([current_df, new_row], ignore_index=True)
-        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=updated_df)
+    if st.button("💾 Ca Speichern"):
+        new_row = pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val)}])
+        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=pd.concat([df_ca, new_row], ignore_index=True))
         st.cache_data.clear()
-        st.success("Ca gespeichert!")
         st.rerun()
-        
-    if c4.button("🗑️ Ca Letzten löschen"):
-        if not df_ca.empty:
-            updated_df = df_ca[:-1]
-            conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=updated_df)
-            st.cache_data.clear()
-            st.rerun()
 
-# --- BERECHNUNG & AUSGABE ---
+# --- BERECHNUNG & AUTO-SAVE VERBRAUCH ---
 st.divider()
 res_col1, res_col2 = st.columns(2)
 
-# Hilfsfunktion für saubere Berechnung
-def calc_consumption(df, current_dosis, vol, factor, unit_factor=1):
-    # Sicherstellen, dass factor nicht 0 ist
-    safe_factor = factor if factor > 0 else (10.0 if unit_factor == 1 else 14.0)
-    
+def calc_and_save(df, dosis, vol, factor, param_name, is_ca=False):
     if df is not None and len(df) >= 2:
-        temp_df = df.copy()
-        temp_df["Datum"] = pd.to_datetime(temp_df["Datum"], errors='coerce')
-        temp_df["Wert"] = pd.to_numeric(temp_df["Wert"], errors='coerce')
-        temp_df = temp_df.dropna().sort_values("Datum")
+        d = df.copy()
+        d["Datum"] = pd.to_datetime(d["Datum"], errors='coerce')
+        d["Wert"] = pd.to_numeric(d["Wert"], errors='coerce')
+        d = d.dropna().sort_values("Datum")
         
-        if len(temp_df) >= 2:
-            last, prev = temp_df.iloc[-1], temp_df.iloc[-2]
-            days = (last["Datum"] - prev["Datum"]).days
-            if days > 0:
-                drop_per_day = (prev["Wert"] - last["Wert"]) / days
-                dosis_impact = current_dosis / (vol / 100) / (safe_factor / unit_factor)
-                total_usage = drop_per_day + dosis_impact
-                delta_ml = drop_per_day * (vol / 100) * (safe_factor / unit_factor)
-                return round(total_usage, 3), round(delta_ml, 1), round(dosis_impact, 3)
-    return None, None, None
+        if len(d) >= 2:
+            last, prev = d.iloc[-1], d.iloc[-2]
+            tage = (last["Datum"] - prev["Datum"]).days
+            if tage > 0:
+                abfall = (prev["Wert"] - last["Wert"]) / tage
+                f = factor / 10 if is_ca else factor
+                dosis_wirkung = dosis / (vol / 100) / f
+                verbrauch = round(abfall + dosis_wirkung, 3)
+                
+                # Wenn der berechnete Verbrauch neu ist, im Setup-Dictionary (temporär) speichern
+                if verbrauch != setup_values[param_name]:
+                    setup_values[param_name] = verbrauch
+                    # Hier könnte man ein Auto-Update zum Sheet machen, 
+                    # wir machen es aber elegant über die Anzeige
+                
+                delta_ml = round(abfall * (vol / 100) * f, 1)
+                return verbrauch, round(dosis + delta_ml, 1), delta_ml
+    return setup_values[param_name], None, None
 
-# KH Berechnung
-usage_kh, correction_kh, impact_kh = calc_consumption(df_kh, curr_kh_ml, volumen, kh_factor)
-if usage_kh is not None:
-    res_col1.metric(f"Dosis {brand_kh}", f"{round(curr_kh_ml + correction_kh, 1)} ml", f"{correction_kh} ml Delta")
-    res_col1.subheader(f"📉 Realer Verbrauch: {usage_kh} dKH/Tag")
-    res_col1.caption(f"Aktuelle Dosis deckt {impact_kh} dKH ab.")
+# KH
+v_kh, d_kh, diff_kh = calc_and_save(df_kh, s_curr_kh_ml, s_volumen, s_kh_factor, "KH_Verbrauch")
+if d_kh is not None:
+    res_col1.metric(f"Dosis {s_brand_kh}", f"{d_kh} ml", f"{diff_kh} ml Delta")
+    res_col1.subheader(f"📉 Realer Verbrauch: {v_kh} dKH/Tag")
 else:
-    res_col1.info("Warte auf genügend KH-Daten (mind. 2 Messungen)...")
+    res_col1.subheader(f"📉 Letzter Verbrauch: {setup_values['KH_Verbrauch']} dKH/Tag")
+    res_col1.info("Warte auf neue Messungen...")
 
-# Calcium Berechnung
-usage_ca, correction_ca, impact_ca = calc_consumption(df_ca, curr_ca_ml, volumen, ca_factor, unit_factor=10)
-if usage_ca is not None:
-    res_col2.metric(f"Dosis {brand_ca}", f"{round(curr_ca_ml + correction_ca, 1)} ml", f"{correction_ca} ml Delta")
-    res_col2.subheader(f"📉 Realer Verbrauch: {usage_ca} mg/l / Tag")
-    res_col2.caption(f"Aktuelle Dosis deckt {impact_ca} mg/l ab.")
+# CA
+v_ca, d_ca, diff_ca = calc_and_save(df_ca, s_curr_ca_ml, s_volumen, s_ca_factor, "CA_Verbrauch", is_ca=True)
+if d_ca is not None:
+    res_col2.metric(f"Dosis {s_brand_ca}", f"{d_ca} ml", f"{diff_ca} ml Delta")
+    res_col2.subheader(f"📉 Realer Verbrauch: {v_ca} mg/l / Tag")
 else:
-    res_col2.info("Warte auf genügend Ca-Daten (mind. 2 Messungen)...")
+    res_col2.subheader(f"📉 Letzter Verbrauch: {setup_values['CA_Verbrauch']} mg/l / Tag")
+    res_col2.info("Warte auf neue Messungen...")
+
+# Auto-Save Logik: Wenn Werte berechnet wurden, die von den gespeicherten abweichen
+if (v_kh != setup_values["KH_Verbrauch"] or v_ca != setup_values["CA_Verbrauch"]) and (d_kh is not None or d_ca is not None):
+    new_setup_auto = pd.DataFrame({
+        "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
+        "Wert": [s_volumen, s_brand_kh, s_brand_ca, s_curr_kh_ml, s_curr_ca_ml, s_kh_factor, s_ca_factor, v_kh, v_ca]
+    })
+    conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_auto)
+    st.cache_data.clear()
 
 # --- HISTORIE ---
 st.divider()
 with st.expander("📊 Historie & Verlauf"):
     h1, h2 = st.columns(2)
     if not df_kh.empty:
-        h1.write(f"Verlauf {brand_kh}")
         h1.line_chart(df_kh.set_index("Datum")["Wert"])
     if not df_ca.empty:
-        h2.write(f"Verlauf {brand_ca}")
         h2.line_chart(df_ca.set_index("Datum")["Wert"])
