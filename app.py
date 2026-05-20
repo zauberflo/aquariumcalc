@@ -62,7 +62,7 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    st.caption("Diese Menge lief im Zeitraum zwischen den Messungen!")
+    st.caption("Wichtig: Das ist die Menge, die bis JETZT gelaufen ist!")
     s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=float(setup_values["KH_Dosis"]), format="%.1f")
     s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=float(setup_values["CA_Dosis"]), format="%.1f")
     
@@ -92,26 +92,44 @@ df_ca = load_data("CA")
 
 st.title("🌊 Zauberflos AquaCalc Cloud")
 
-# --- MESSWERTE EINGEBEN ---
+# --- MESSWERTE EINGEBEN & AUTO-SAVE DOSIERUNG ---
 c_in1, c_in2 = st.columns(2)
 with c_in1:
     st.subheader(f"🧪 {s_brand_kh} Messung")
     kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kin")
     if st.button("💾 KH Speichern"):
+        # 1. Messwert in KH-Tabelle schreiben
         new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(kh_val)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
+        
+        # 2. Gleichzeitig den aktuellen Stand der Regler im Setup sichern
+        new_setup = pd.DataFrame({
+            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
+            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
+        })
+        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
+        
         st.cache_data.clear()
-        st.success("KH gespeichert!")
+        st.success("Messwert & Dosierung gespeichert!")
         st.rerun()
 
 with c_in2:
     st.subheader(f"🧪 {s_brand_ca} Messung")
     ca_val = st.number_input("Messwert (mg/l)", step=1, key="cin")
     if st.button("💾 Ca Speichern"):
+        # 1. Messwert in CA-Tabelle schreiben
         new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
+        
+        # 2. Gleichzeitig den aktuellen Stand der Regler im Setup sichern
+        new_setup = pd.DataFrame({
+            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
+            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
+        })
+        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
+        
         st.cache_data.clear()
-        st.success("Ca gespeichert!")
+        st.success("Messwert & Dosierung gespeichert!")
         st.rerun()
 
 # --- BERECHNUNG ---
@@ -130,21 +148,13 @@ def calculate_aquarium(df, running_dosis, vol, factor, target_val, is_ca=False):
             tage = (last["Datum"] - prev["Datum"]).days
             
             if tage > 0:
-                # 1. Tägliche Änderung im Beckenwasser
                 becken_differenz_pro_tag = (prev["Wert"] - last["Wert"]) / tage
-                
-                # 2. Wirkung der laufenden Dosis
                 f_konzentration = factor / 10 if is_ca else factor
                 dosierte_menge_in_wert = running_dosis / (vol / 100) / f_konzentration
-                
-                # 3. Echter Gesamtverbrauch pro Tag
                 v_real = round(becken_differenz_pro_tag + dosierte_menge_in_wert, 3)
-                
-                # 4. Neue Dosis zum HALTEN des aktuellen Wertes
                 d_neu = round(v_real * (vol / 100) * f_konzentration, 1)
                 delta_ml = round(d_neu - running_dosis, 1)
                 
-                # 5. Einmalige Dosis zum ANHEBEN auf Wunschwert
                 diff_to_target = target_val - last["Wert"]
                 einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
                 
