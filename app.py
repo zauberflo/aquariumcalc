@@ -134,7 +134,6 @@ def calculate_monthly_average(df, running_dosis, vol, factor, is_ca=False):
         d["Wert"] = pd.to_numeric(d["Wert"])
         d = d.dropna().sort_values("Datum")
         
-        # Filter auf die letzten 30 Tage ab heute
         one_month_ago = datetime.now() - timedelta(days=30)
         d = d[d["Datum"] >= one_month_ago]
         
@@ -142,7 +141,6 @@ def calculate_monthly_average(df, running_dosis, vol, factor, is_ca=False):
             verbrauche = []
             f_konzentration = factor / 10 if is_ca else factor
             
-            # Gehe paarweise durch die Messungen des letzten Monats
             for i in range(1, len(d)):
                 prev = d.iloc[i-1]
                 last = d.iloc[i]
@@ -194,47 +192,4 @@ def calculate_aquarium(df, running_dosis, vol, factor, target_val, is_ca=False):
 v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
     res1.metric(f"Empfehlung {s_brand_kh} (Kurzzeit)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
-    res1.write(f"Verbrauch aktuell: **{v_kh} dKH/Tag**")
-    if up_kh > 0:
-        res1.warning(f"🔺 **Einmalig:** +{up_kh} ml extra für Ziel {target_kh} dKH.")
-    
-    if res1.button("✅ Diese Kurzzeit-Dosis aktivieren"):
-        setup_values["KH_Dosis"] = d_kh
-        setup_values["KH_Verbrauch"] = v_kh
-        new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
-        st.cache_data.clear()
-        st.rerun()
-else:
-    res1.info("Warte auf ausreichende KH Messdaten...")
-
-# --- AUSGABE CA AKTUELL ---
-v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
-if v_ca is not None:
-    res2.metric(f"Empfehlung {s_brand_ca} (Kurzzeit)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
-    res2.write(f"Verbrauch aktuell: **{v_ca} mg/l/Tag**")
-    if up_ca > 0:
-        res2.warning(f"🔺 **Einmalig:** +{up_ca} ml extra für Ziel {target_ca} mg/l.")
-    
-    if res2.button("✅ Diese Kurzzeit-Dosis aktivieren"):
-        setup_values["CA_Dosis"] = d_ca
-        setup_values["CA_Verbrauch"] = v_ca
-        new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
-        st.cache_data.clear()
-        st.rerun()
-else:
-    res2.info("Warte auf ausreichende Ca Messdaten...")
-
-# --- NEUER BEREICH: LANGZEIT TREND (30 TAGE DURCHSCHNITT) ---
-st.divider()
-st.header("📊 Langzeit-Trend (Ø Letzte 30 Tage)")
-trend1, trend2 = st.columns(2)
-
-# KH Trend
-avg_v_kh, avg_d_kh = calculate_monthly_average(df_kh, s_kh_d, s_vol, s_kh_f, is_ca=False)
-if avg_v_kh is not None:
-    trend1.metric(f"Glatte Monats-Dosis {s_brand_kh}", f"{avg_d_kh} ml", f"{round(avg_d_kh - s_kh_d, 1)} ml Delta")
-    trend1.write(f"📈 Ø Verbrauch (30 Tage): **{avg_v_kh} dKH/Tag**")
-    if trend1.button("📈 Gequetschte Monats-Dosis für KH übernehmen"):
-        setup_values["KH_Dosis"] = avg_d
+    res1.write(f"Verbrauch aktuell:
