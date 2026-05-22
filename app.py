@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 from PIL import Image
 from io import BytesIO
@@ -98,17 +98,14 @@ with c_in1:
     st.subheader(f"🧪 {s_brand_kh} Messung")
     kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kin")
     if st.button("💾 KH Speichern"):
-        # 1. Messwert in KH-Tabelle schreiben
         new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(kh_val)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
         
-        # 2. Gleichzeitig den aktuellen Stand der Regler im Setup sichern
         new_setup = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
-        
         st.cache_data.clear()
         st.success("Messwert & Dosierung gespeichert!")
         st.rerun()
@@ -117,23 +114,55 @@ with c_in2:
     st.subheader(f"🧪 {s_brand_ca} Messung")
     ca_val = st.number_input("Messwert (mg/l)", step=1, key="cin")
     if st.button("💾 Ca Speichern"):
-        # 1. Messwert in CA-Tabelle schreiben
         new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
         
-        # 2. Gleichzeitig den aktuellen Stand der Regler im Setup sichern
         new_setup = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
-        
         st.cache_data.clear()
         st.success("Messwert & Dosierung gespeichert!")
         st.rerun()
 
-# --- BERECHNUNG ---
+# --- HILFSFUNKTION FÜR MONATS-DURCHSCHNITT ---
+def calculate_monthly_average(df, running_dosis, vol, factor, is_ca=False):
+    if df is not None and len(df) >= 2:
+        d = df.copy()
+        d["Datum"] = pd.to_datetime(d["Datum"])
+        d["Wert"] = pd.to_numeric(d["Wert"])
+        d = d.dropna().sort_values("Datum")
+        
+        # Filter auf die letzten 30 Tage ab heute
+        one_month_ago = datetime.now() - timedelta(days=30)
+        d = d[d["Datum"] >= one_month_ago]
+        
+        if len(d) >= 2:
+            verbrauche = []
+            f_konzentration = factor / 10 if is_ca else factor
+            
+            # Gehe paarweise durch die Messungen des letzten Monats
+            for i in range(1, len(d)):
+                prev = d.iloc[i-1]
+                last = d.iloc[i]
+                tage = (last["Datum"] - prev["Datum"]).days
+                
+                if tage > 0:
+                    becken_diff = (prev["Wert"] - last["Wert"]) / tage
+                    dosis_wirkung = running_dosis / (vol / 100) / f_konzentration
+                    v_intervall = becken_diff + dosis_wirkung
+                    verbrauche.append(v_intervall)
+            
+            if verbrauche:
+                avg_v = sum(verbrauche) / len(verbrauche)
+                d_empfohlen = avg_v * (vol / 100) * f_konzentration
+                return round(avg_v, 3), round(d_empfohlen, 1)
+    return None, None
+
+# --- BASIS-BERECHNUNG (LETZTE BEIDEN MESSUNGEN) ---
 st.divider()
+st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
 res1, res2 = st.columns(2)
 
 def calculate_aquarium(df, running_dosis, vol, factor, target_val, is_ca=False):
@@ -161,47 +190,51 @@ def calculate_aquarium(df, running_dosis, vol, factor, target_val, is_ca=False):
                 return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
     return None, None, None, None, None
 
-# --- AUSGABE KH ---
+# --- AUSGABE KH AKTUELL ---
 v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
-    res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
-    res1.write(f"📉 Realer Gesamtverbrauch: **{v_kh} dKH/Tag**")
+    res1.metric(f"Empfehlung {s_brand_kh} (Kurzzeit)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
+    res1.write(f"Verbrauch aktuell: **{v_kh} dKH/Tag**")
     if up_kh > 0:
-        res1.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_kh} ml** extra, um von {last_kh} auf {target_kh} dKH zu steigen.")
+        res1.warning(f"🔺 **Einmalig:** +{up_kh} ml extra für Ziel {target_kh} dKH.")
     
-    if res1.button("✅ Neue Tagesdosis für KH aktivieren"):
+    if res1.button("✅ Diese Kurzzeit-Dosis aktivieren"):
         setup_values["KH_Dosis"] = d_kh
         setup_values["KH_Verbrauch"] = v_kh
         new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
         st.cache_data.clear()
-        st.success("Dosis übernommen!")
         st.rerun()
 else:
-    res1.subheader(f"Letzter KH Verbrauch: {setup_values['KH_Verbrauch']} dKH/Tag")
+    res1.info("Warte auf ausreichende KH Messdaten...")
 
-# --- AUSGABE CA ---
+# --- AUSGABE CA AKTUELL ---
 v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
 if v_ca is not None:
-    res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
-    res2.write(f"📉 Realer Gesamtverbrauch: **{v_ca} mg/l/Tag**")
+    res2.metric(f"Empfehlung {s_brand_ca} (Kurzzeit)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
+    res2.write(f"Verbrauch aktuell: **{v_ca} mg/l/Tag**")
     if up_ca > 0:
-        res2.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_ca} ml** extra, um von {last_ca} auf {target_ca} mg/l zu steigen.")
+        res2.warning(f"🔺 **Einmalig:** +{up_ca} ml extra für Ziel {target_ca} mg/l.")
     
-    if res2.button("✅ Neue Tagesdosis für Ca aktivieren"):
+    if res2.button("✅ Diese Kurzzeit-Dosis aktivieren"):
         setup_values["CA_Dosis"] = d_ca
         setup_values["CA_Verbrauch"] = v_ca
         new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
         st.cache_data.clear()
-        st.success("Dosis übernommen!")
         st.rerun()
 else:
-    res2.subheader(f"Letzter Ca Verbrauch: {setup_values['CA_Verbrauch']} mg/l/Tag")
+    res2.info("Warte auf ausreichende Ca Messdaten...")
 
-# --- HISTORIE ---
+# --- NEUER BEREICH: LANGZEIT TREND (30 TAGE DURCHSCHNITT) ---
 st.divider()
-with st.expander("📊 Historie & Verlauf"):
-    h1, h2 = st.columns(2)
-    if not df_kh.empty: st.line_chart(df_kh.set_index("Datum")["Wert"])
-    if not df_ca.empty: st.line_chart(df_ca.set_index("Datum")["Wert"])
+st.header("📊 Langzeit-Trend (Ø Letzte 30 Tage)")
+trend1, trend2 = st.columns(2)
+
+# KH Trend
+avg_v_kh, avg_d_kh = calculate_monthly_average(df_kh, s_kh_d, s_vol, s_kh_f, is_ca=False)
+if avg_v_kh is not None:
+    trend1.metric(f"Glatte Monats-Dosis {s_brand_kh}", f"{avg_d_kh} ml", f"{round(avg_d_kh - s_kh_d, 1)} ml Delta")
+    trend1.write(f"📈 Ø Verbrauch (30 Tage): **{avg_v_kh} dKH/Tag**")
+    if trend1.button("📈 Gequetschte Monats-Dosis für KH übernehmen"):
+        setup_values["KH_Dosis"] = avg_d
