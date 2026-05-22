@@ -97,8 +97,9 @@ c_in1, c_in2 = st.columns(2)
 with c_in1:
     st.subheader(f"🧪 {s_brand_kh} Messung")
     kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kin")
+    kh_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=1.0, key="k_extra", help="Trage hier die ml ein, die du JETZT einmalig zugibst, um den Wert anzuheben.")
     if st.button("💾 KH Speichern"):
-        new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(kh_val)}])], ignore_index=True)
+        new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(kh_val), "Zugabe": float(kh_extra)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
         
         new_setup = pd.DataFrame({
@@ -114,8 +115,9 @@ with c_in1:
 with c_in2:
     st.subheader(f"🧪 {s_brand_ca} Messung")
     ca_val = st.number_input("Messwert (mg/l)", step=1, key="cin")
+    ca_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=5.0, key="c_extra", help="Trage hier die ml ein, die du JETZT einmalig zugibst, um den Wert anzuheben.")
     if st.button("💾 Ca Speichern"):
-        new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val)}])], ignore_index=True)
+        new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val), "Zugabe": float(ca_extra)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
         
         new_setup = pd.DataFrame({
@@ -134,7 +136,11 @@ def calculate_monthly_average(df, running_dosis, vol, factor, is_ca=False):
         d = df.copy()
         d["Datum"] = pd.to_datetime(d["Datum"])
         d["Wert"] = pd.to_numeric(d["Wert"])
-        d = d.dropna().sort_values("Datum")
+        if "Zugabe" in d.columns:
+            d["Zugabe"] = pd.to_numeric(d["Zugabe"]).fillna(0.0)
+        else:
+            d["Zugabe"] = 0.0
+        d = d.dropna(subset=["Wert"]).sort_values("Datum")
         
         one_month_ago = datetime.now() - timedelta(days=30)
         d = d[d["Datum"] >= one_month_ago]
@@ -151,7 +157,11 @@ def calculate_monthly_average(df, running_dosis, vol, factor, is_ca=False):
                 if tage > 0:
                     becken_diff = (prev["Wert"] - last["Wert"]) / tage
                     dosis_wirkung = running_dosis / (vol / 100) / f_konzentration
-                    v_intervall = becken_diff + dosis_wirkung
+                    
+                    # Einrechnen der manuellen Zugabe, die BEI DER LETZTEN MESSUNG reingekippt wurde
+                    zugabe_wirkung_pro_tag = (prev["Zugabe"] / (vol / 100) / f_konzentration) / tage
+                    
+                    v_intervall = becken_diff + dosis_wirkung + zugabe_wirkung_pro_tag
                     verbrauche.append(v_intervall)
             
             if verbrauche:
@@ -170,7 +180,11 @@ def calculate_aquarium(df, running_dosis, vol, factor, target_val, is_ca=False):
         d = df.copy()
         d["Datum"] = pd.to_datetime(d["Datum"])
         d["Wert"] = pd.to_numeric(d["Wert"])
-        d = d.dropna().sort_values("Datum")
+        if "Zugabe" in d.columns:
+            d["Zugabe"] = pd.to_numeric(d["Zugabe"]).fillna(0.0)
+        else:
+            d["Zugabe"] = 0.0
+        d = d.dropna(subset=["Wert"]).sort_values("Datum")
         
         if len(d) >= 2:
             last, prev = d.iloc[-1], d.iloc[-2]
@@ -180,7 +194,12 @@ def calculate_aquarium(df, running_dosis, vol, factor, target_val, is_ca=False):
                 becken_differenz_pro_tag = (prev["Wert"] - last["Wert"]) / tage
                 f_konzentration = factor / 10 if is_ca else factor
                 dosierte_menge_in_wert = running_dosis / (vol / 100) / f_konzentration
-                v_real = round(becken_differenz_pro_tag + dosierte_menge_in_wert, 3)
+                
+                # Die manuelle Zugabe vom VORTAG (prev) erhöhte den Wert, den wir heute vorfinden.
+                # Daher addieren wir ihre Wirkung zum realen Verbrauch hinzu.
+                zugabe_wirkung_pro_tag = (prev["Zugabe"] / (vol / 100) / f_konzentration) / tage
+                
+                v_real = round(becken_differenz_pro_tag + dosierte_menge_in_wert + zugabe_wirkung_pro_tag, 3)
                 d_neu = round(v_real * (vol / 100) * f_konzentration, 1)
                 delta_ml = round(d_neu - running_dosis, 1)
                 
@@ -233,7 +252,7 @@ st.divider()
 st.header("📊 Langzeit-Trend (Ø Letzte 30 Tage)")
 trend1, trend2 = st.columns(2)
 
-# KH Trend Berechnung und Anzeige
+# KH Trend
 avg_v_kh, avg_d_kh = calculate_monthly_average(df_kh, s_kh_d, s_vol, s_kh_f, is_ca=False)
 if avg_v_kh is not None:
     trend1.metric(f"Monats-Dosis {s_brand_kh} (Trend)", f"{avg_d_kh} ml", f"{round(avg_d_kh - s_kh_d, 1)} ml Delta")
@@ -249,7 +268,7 @@ if avg_v_kh is not None:
 else:
     trend1.info("Noch nicht genügend Messwerte innerhalb der letzten 30 Tage für einen KH-Monatstrend.")
 
-# Ca Trend Berechnung und Anzeige
+# Ca Trend
 avg_v_ca, avg_d_ca = calculate_monthly_average(df_ca, s_ca_d, s_vol, s_ca_f, is_ca=True)
 if avg_v_ca is not None:
     trend2.metric(f"Monats-Dosis {s_brand_ca} (Trend)", f"{avg_d_ca} ml", f"{round(avg_d_ca - s_ca_d, 1)} ml Delta")
