@@ -103,4 +103,18 @@ with c_in1:
         
         new_setup = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
-            "Wert":
+            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
+        })
+        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
+        st.cache_data.clear()
+        st.success("Messwert & Dosierung gespeichert!")
+        st.rerun()
+
+with c_in2:
+    st.subheader(f"🧪 {s_brand_ca} Messung")
+    ca_val = st.number_input("Messwert (mg/l)", step=1, key="cin")
+    if st.button("💾 Ca Speichern"):
+        new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val)}])], ignore_index=True)
+        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
+        
+        new_setup =
