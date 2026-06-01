@@ -97,7 +97,7 @@ c_in1, c_in2 = st.columns(2)
 with c_in1:
     st.subheader(f"🧪 {s_brand_kh} Messung")
     kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kin")
-    kh_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=1.0, key="k_extra", help="Trage hier die ml ein, die du JETZT einmalig zugibst, um den Wert anzuheben.")
+    kh_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=1.0, key="k_extra")
     if st.button("💾 KH Speichern"):
         new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(kh_val), "Zugabe": float(kh_extra)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
@@ -107,7 +107,6 @@ with c_in1:
             "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
-        
         st.cache_data.clear()
         st.success("Messwert & Dosierung gespeichert!")
         st.rerun()
@@ -115,7 +114,7 @@ with c_in1:
 with c_in2:
     st.subheader(f"🧪 {s_brand_ca} Messung")
     ca_val = st.number_input("Messwert (mg/l)", step=1, key="cin")
-    ca_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=5.0, key="c_extra", help="Trage hier die ml ein, die du JETZT einmalig zugibst, um den Wert anzuheben.")
+    ca_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=5.0, key="c_extra")
     if st.button("💾 Ca Speichern"):
         new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val), "Zugabe": float(ca_extra)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
@@ -125,95 +124,63 @@ with c_in2:
             "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
-        
         st.cache_data.clear()
         st.success("Messwert & Dosierung gespeichert!")
         st.rerun()
 
-# --- HILFSFUNKTION FÜR MONATS-DURCHSCHNITT ---
-def calculate_monthly_average(df, running_dosis, vol, factor, is_ca=False):
-    if df is not None and len(df) >= 2:
-        d = df.copy()
-        d["Datum"] = pd.to_datetime(d["Datum"])
-        d["Wert"] = pd.to_numeric(d["Wert"])
-        if "Zugabe" in d.columns:
-            d["Zugabe"] = pd.to_numeric(d["Zugabe"]).fillna(0.0)
-        else:
-            d["Zugabe"] = 0.0
-        d = d.dropna(subset=["Wert"]).sort_values("Datum")
-        
-        one_month_ago = datetime.now() - timedelta(days=30)
-        d = d[d["Datum"] >= one_month_ago]
-        
-        if len(d) >= 2:
-            verbrauche = []
-            f_konzentration = factor / 10 if is_ca else factor
-            
-            for i in range(1, len(d)):
-                prev = d.iloc[i-1]
-                last = d.iloc[i]
-                tage = (last["Datum"] - prev["Datum"]).days
-                
-                if tage > 0:
-                    becken_diff = (prev["Wert"] - last["Wert"]) / tage
-                    dosis_wirkung = running_dosis / (vol / 100) / f_konzentration
-                    
-                    # Einrechnen der manuellen Zugabe, die BEI DER LETZTEN MESSUNG reingekippt wurde
-                    zugabe_wirkung_pro_tag = (prev["Zugabe"] / (vol / 100) / f_konzentration) / tage
-                    
-                    v_intervall = becken_diff + dosis_wirkung + zugabe_wirkung_pro_tag
-                    verbrauche.append(v_intervall)
-            
-            if verbrauche:
-                avg_v = sum(verbrauche) / len(verbrauche)
-                d_empfohlen = avg_v * (vol / 100) * f_konzentration
-                return round(avg_v, 3), round(d_empfohlen, 1)
-    return None, None
-
-# --- BASIS-BERECHNUNG (LETZTE BEIDEN MESSUNGEN) ---
+# --- EXAKTE STRIKTE BERECHNUNG (NUR DIE LETZTEN BEIDEN MESSUNGEN) ---
 st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
 res1, res2 = st.columns(2)
 
-def calculate_aquarium(df, running_dosis, vol, factor, target_val, is_ca=False):
+def calculate_aquarium_strict(df, running_dosis, vol, factor, target_val, is_ca=False):
     if df is not None and len(df) >= 2:
         d = df.copy()
         d["Datum"] = pd.to_datetime(d["Datum"])
         d["Wert"] = pd.to_numeric(d["Wert"])
-        if "Zugabe" in d.columns:
-            d["Zugabe"] = pd.to_numeric(d["Zugabe"]).fillna(0.0)
-        else:
-            d["Zugabe"] = 0.0
+        d["Zugabe"] = pd.to_numeric(d.get("Zugabe", 0.0)).fillna(0.0)
         d = d.dropna(subset=["Wert"]).sort_values("Datum")
         
         if len(d) >= 2:
-            last, prev = d.iloc[-1], d.iloc[-2]
+            # Holen der exakt letzten beiden Zeilen
+            last = d.iloc[-1]   # Aktuelle Messung (Heute)
+            prev = d.iloc[-2]   # Vorherige Messung (Letztes Mal)
+            
             tage = (last["Datum"] - prev["Datum"]).days
             
             if tage > 0:
-                becken_differenz_pro_tag = (prev["Wert"] - last["Wert"]) / tage
                 f_konzentration = factor / 10 if is_ca else factor
-                dosierte_menge_in_wert = running_dosis / (vol / 100) / f_konzentration
                 
-                # Die manuelle Zugabe vom VORTAG (prev) erhöhte den Wert, den wir heute vorfinden.
-                # Daher addieren wir ihre Wirkung zum realen Verbrauch hinzu.
+                # 1. Reiner Abfall im Beckenwert pro Tag
+                becken_diff_pro_tag = (prev["Wert"] - last["Wert"]) / tage
+                
+                # 2. Was die Dosierpumpe in der Zeit pro Tag reingepumpt hat
+                dosis_wirkung_pro_tag = running_dosis / (vol / 100) / f_konzentration
+                
+                # 3. KORREKTUR: Die manuelle Zugabe von der VORHERIGEN Messung (prev) 
+                # hat den Startwert künstlich erhöht. Sie muss auf die Tage aufgeteilt addiert werden.
                 zugabe_wirkung_pro_tag = (prev["Zugabe"] / (vol / 100) / f_konzentration) / tage
                 
-                v_real = round(becken_differenz_pro_tag + dosierte_menge_in_wert + zugabe_wirkung_pro_tag, 3)
+                # Gesamter realer Verbrauch pro Tag
+                v_real = round(becken_diff_pro_tag + dosis_wirkung_pro_tag + zugabe_wirkung_pro_tag, 3)
+                
+                # Neue dauerhafte Tagesdosis, um diesen Verbrauch exakt zu decken
                 d_neu = round(v_real * (vol / 100) * f_konzentration, 1)
                 delta_ml = round(d_neu - running_dosis, 1)
                 
+                # Einmalige Dosis für den aktuellen Messwert, um auf den Wunschwert zu kommen
                 diff_to_target = target_val - last["Wert"]
                 einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
                 
                 return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
+                
     return None, None, None, None, None
 
 # --- AUSGABE KH ---
-v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
+v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
     res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
-    res1.write(f"📉 Realer Gesamtverbrauch: **{v_kh} dKH/Tag**")
+    res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
     if up_kh > 0:
         res1.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_kh} ml** extra, um von {last_kh} auf {target_kh} dKH zu steigen.")
     
@@ -229,10 +196,10 @@ else:
     res1.subheader(f"Letzter KH Verbrauch: {setup_values['KH_Verbrauch']} dKH/Tag")
 
 # --- AUSGABE CA ---
-v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
+v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_strict(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
 if v_ca is not None:
     res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
-    res2.write(f"📉 Realer Gesamtverbrauch: **{v_ca} mg/l/Tag**")
+    res2.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_ca} mg/l/Tag**")
     if up_ca > 0:
         res2.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_ca} ml** extra, um von {last_ca} auf {target_ca} mg/l zu steigen.")
     
@@ -246,43 +213,6 @@ if v_ca is not None:
         st.rerun()
 else:
     res2.subheader(f"Letzter Ca Verbrauch: {setup_values['CA_Verbrauch']} mg/l/Tag")
-
-# --- NEUER BEREICH: LANGZEIT TREND (30 TAGE DURCHSCHNITT) ---
-st.divider()
-st.header("📊 Langzeit-Trend (Ø Letzte 30 Tage)")
-trend1, trend2 = st.columns(2)
-
-# KH Trend
-avg_v_kh, avg_d_kh = calculate_monthly_average(df_kh, s_kh_d, s_vol, s_kh_f, is_ca=False)
-if avg_v_kh is not None:
-    trend1.metric(f"Monats-Dosis {s_brand_kh} (Trend)", f"{avg_d_kh} ml", f"{round(avg_d_kh - s_kh_d, 1)} ml Delta")
-    trend1.write(f"📈 Ø Verbrauch (30 Tage): **{avg_v_kh} dKH/Tag**")
-    if trend1.button("📈 Monats-Dosis für KH übernehmen", key="btn_trend_kh"):
-        setup_values["KH_Dosis"] = avg_d_kh
-        setup_values["KH_Verbrauch"] = avg_v_kh
-        new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
-        st.cache_data.clear()
-        st.success("Monats-Trend für KH aktiviert!")
-        st.rerun()
-else:
-    trend1.info("Noch nicht genügend Messwerte innerhalb der letzten 30 Tage für einen KH-Monatstrend.")
-
-# Ca Trend
-avg_v_ca, avg_d_ca = calculate_monthly_average(df_ca, s_ca_d, s_vol, s_ca_f, is_ca=True)
-if avg_v_ca is not None:
-    trend2.metric(f"Monats-Dosis {s_brand_ca} (Trend)", f"{avg_d_ca} ml", f"{round(avg_d_ca - s_ca_d, 1)} ml Delta")
-    trend2.write(f"📈 Ø Verbrauch (30 Tage): **{avg_v_ca} mg/l/Tag**")
-    if trend2.button("📈 Monats-Dosis für Ca übernehmen", key="btn_trend_ca"):
-        setup_values["CA_Dosis"] = avg_d_ca
-        setup_values["CA_Verbrauch"] = avg_v_ca
-        new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
-        st.cache_data.clear()
-        st.success("Monats-Trend für Ca aktiviert!")
-        st.rerun()
-else:
-    trend2.info("Noch nicht genügend Messwerte innerhalb der letzten 30 Tage für einen Ca-Monatstrend.")
 
 # --- HISTORIE ---
 st.divider()
