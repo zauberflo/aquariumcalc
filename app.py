@@ -61,10 +61,6 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    st.caption("Ausgelesen aus der Setup-Tabelle im Sheet")
-    
-    # ACHTUNG: Steuerung erfolgt jetzt primär über die berechneten Werte, 
-    # kann hier aber manuell editiert und direkt im Setup gesichert werden.
     s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=float(setup_values["KH_Dosis"]), format="%.1f")
     s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=float(setup_values["CA_Dosis"]), format="%.1f")
     
@@ -112,7 +108,7 @@ df_ca = clean_dataframe(raw_ca)
 
 st.title("🌊 Zauberflos AquaCalc Cloud")
 
-# --- MESSWERTE EINGEBEN (OHNE DIREKTES SETUP-ÜBERSCHREIBEN BEIM MESSEN) ---
+# --- MESSWERTE EINGEBEN ---
 c_in1, c_in2 = st.columns(2)
 with c_in1:
     st.subheader(f"🧪 {s_brand_kh} Messung")
@@ -178,7 +174,6 @@ if v_kh is not None:
         res1.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_kh} ml** extra, um von {last_kh} auf {target_kh} dKH zu steigen.")
     
     if res1.button("✅ Neue Tagesdosis für KH aktivieren"):
-        # Schreibt den ermittelten Wert direkt in die Setup-Tabelle
         new_setup_kh = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, d_kh, s_ca_d, s_kh_f, s_ca_f, v_kh, setup_values["CA_Verbrauch"]]
@@ -200,7 +195,6 @@ if v_ca is not None:
         res2.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_ca} ml** extra, um von {last_ca} auf {target_ca} mg/l zu steigen.")
     
     if res2.button("✅ Neue Tagesdosis für Ca aktivieren"):
-        # Schreibt den ermittelten Wert direkt in die Setup-Tabelle
         new_setup_ca = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], v_ca]
@@ -222,6 +216,8 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
         st.subheader(f"{s_brand_kh} Verlauf & Editor")
         if not df_kh.empty:
             st.line_chart(df_kh.set_index("Datum")["Wert"])
+            
+            st.caption("🗑️ **Zeile Löschen:** Links die Zeile markieren (Häkchen) und auf der Tastatur 'Entf' drücken.")
             edited_kh = st.data_editor(
                 df_kh, num_rows="dynamic", key="editor_kh",
                 column_config={
@@ -230,15 +226,27 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
                     "Zugabe": st.column_config.NumberColumn("Zugabe (ml)", format="%.1f")
                 }, use_container_width=True
             )
+            
             if st.button("💾 Änderungen für KH speichern"):
-                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=edited_kh)
+                # CRITICAL FIX: Erzwingt das Bereinigen gelöschter/geänderter Zeilen
+                clean_edited_kh = edited_kh.dropna(subset=["Datum", "Wert"])
+                
+                # Sheet komplett mit leeren Zeilen überschreiben, um Überhänge zu killen
+                empty_df = pd.DataFrame(columns=["Datum", "Wert", "Zugabe"])
+                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=empty_df)
+                
+                # Frische Daten hochladen
+                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=clean_edited_kh)
                 st.cache_data.clear()
+                st.success("KH-Tabelle erfolgreich neu geschrieben!")
                 st.rerun()
 
     with h2:
         st.subheader(f"{s_brand_ca} Verlauf & Editor")
         if not df_ca.empty:
             st.line_chart(df_ca.set_index("Datum")["Wert"])
+            
+            st.caption("🗑️ **Zeile Löschen:** Links die Zeile markieren (Häkchen) und auf der Tastatur 'Entf' drücken.")
             edited_ca = st.data_editor(
                 df_ca, num_rows="dynamic", key="editor_ca",
                 column_config={
@@ -247,7 +255,17 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
                     "Zugabe": st.column_config.NumberColumn("Zugabe (ml)", format="%.1f")
                 }, use_container_width=True
             )
+            
             if st.button("💾 Änderungen für Ca speichern"):
-                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=edited_ca)
+                # CRITICAL FIX: Erzwingt das Bereinigen gelöschter/geänderter Zeilen
+                clean_edited_ca = edited_ca.dropna(subset=["Datum", "Wert"])
+                
+                # Sheet komplett leeren
+                empty_df = pd.DataFrame(columns=["Datum", "Wert", "Zugabe"])
+                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=empty_df)
+                
+                # Frische Daten hochladen
+                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=clean_edited_ca)
                 st.cache_data.clear()
+                st.success("Ca-Tabelle erfolgreich neu geschrieben!")
                 st.rerun()
