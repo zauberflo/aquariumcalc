@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import requests
 from PIL import Image
 from io import BytesIO
@@ -35,7 +35,6 @@ def load_data(sheet_name):
 # --- SETUP DATEN LADEN ---
 df_setup = load_data("Setup")
 
-# Standardwerte (Fallbacks)
 setup_values = {
     "Volumen": 572.0, "KH_Brand": "Oceamo Duo KH", "CA_Brand": "Oceamo Duo Ca",
     "KH_Dosis": 12.0, "CA_Dosis": 15.0, "KH_Faktor": 10.0, "CA_Faktor": 14.0,
@@ -62,7 +61,10 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    st.caption("Wichtig: Das ist die Menge, die bis JETZT gelaufen ist!")
+    st.caption("Ausgelesen aus der Setup-Tabelle im Sheet")
+    
+    # ACHTUNG: Steuerung erfolgt jetzt primär über die berechneten Werte, 
+    # kann hier aber manuell editiert und direkt im Setup gesichert werden.
     s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=float(setup_values["KH_Dosis"]), format="%.1f")
     s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=float(setup_values["CA_Dosis"]), format="%.1f")
     
@@ -86,33 +88,22 @@ with st.sidebar:
         st.success("Setup gespeichert!")
         st.rerun()
 
-# --- DATEN LADEN & STRIPTE BEREINIGUNG ---
+# --- DATEN LADEN & BEREINIGUNG ---
 raw_kh = load_data("KH")
 raw_ca = load_data("CA")
 
 def clean_dataframe(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["Datum", "Wert", "Zugabe"])
-    
     d = df.copy()
-    # Fehlerhafte Spaltennamen aus vorherigen Iterationen fixen
     if "DataFrame" in d.columns:
         d.rename(columns={"DataFrame": "Datum"}, inplace=True)
-    
-    # Sicherstellen, dass die Mindestspalten da sind
-    if "Datum" not in d.columns:
-        d["Datum"] = str(datetime.now().date())
-    if "Wert" not in d.columns:
-        d["Wert"] = 0.0
-    if "Zugabe" not in d.columns:
-        d["Zugabe"] = 0.0
-        
-    # Typen erzwingen und Zeilen ohne Werte droppen
+    if "Datum" not in d.columns: d["Datum"] = str(datetime.now().date())
+    if "Wert" not in d.columns: d["Wert"] = 0.0
+    if "Zugabe" not in d.columns: d["Zugabe"] = 0.0
     d["Wert"] = pd.to_numeric(d["Wert"], errors='coerce')
     d["Zugabe"] = pd.to_numeric(d["Zugabe"], errors='coerce').fillna(0.0)
     d = d.dropna(subset=["Wert"])
-    
-    # Sortierung nach Datum gewährleisten
     d["Datum"] = d["Datum"].astype(str)
     return d[["Datum", "Wert", "Zugabe"]].reset_index(drop=True)
 
@@ -121,7 +112,7 @@ df_ca = clean_dataframe(raw_ca)
 
 st.title("🌊 Zauberflos AquaCalc Cloud")
 
-# --- MESSWERTE EINGEBEN & AUTO-SAVE DOSIERUNG ---
+# --- MESSWERTE EINGEBEN (OHNE DIREKTES SETUP-ÜBERSCHREIBEN BEIM MESSEN) ---
 c_in1, c_in2 = st.columns(2)
 with c_in1:
     st.subheader(f"🧪 {s_brand_kh} Messung")
@@ -130,14 +121,8 @@ with c_in1:
     if st.button("💾 KH Speichern"):
         new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(kh_val), "Zugabe": float(kh_extra)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
-        
-        new_setup = pd.DataFrame({
-            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
-            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
-        })
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
         st.cache_data.clear()
-        st.success("Messwert & Dosierung gespeichert!")
+        st.success("Messwert in KH-Tabelle eingetragen!")
         st.rerun()
 
 with c_in2:
@@ -147,24 +132,17 @@ with c_in2:
     if st.button("💾 Ca Speichern"):
         new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val), "Zugabe": float(ca_extra)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
-        
-        new_setup = pd.DataFrame({
-            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
-            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
-        })
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
         st.cache_data.clear()
-        st.success("Messwert & Dosierung gespeichert!")
+        st.success("Messwert in Ca-Tabelle eingetragen!")
         st.rerun()
 
-# --- EXAKTE STRIKTE BERECHNUNG (NUR DIE LETZTEN BEIDEN MESSUNGEN) ---
+# --- EXAKTE STRIKTE BERECHNUNG ---
 st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
 res1, res2 = st.columns(2)
 
 def calculate_aquarium_strict(df, running_dosis, vol, factor, target_val, is_ca=False):
     if df is not None and len(df) >= 2:
-        # Lokale Kopie für Berechnung mit echten Datetime-Objekten
         d = df.copy()
         d["Datum"] = pd.to_datetime(d["Datum"], errors='coerce')
         d = d.dropna(subset=["Datum"]).sort_values("Datum")
@@ -172,7 +150,6 @@ def calculate_aquarium_strict(df, running_dosis, vol, factor, target_val, is_ca=
         if len(d) >= 2:
             last = d.iloc[-1]   
             prev = d.iloc[-2]   
-            
             tage = (last["Datum"] - prev["Datum"]).days
             
             if tage > 0:
@@ -201,12 +178,14 @@ if v_kh is not None:
         res1.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_kh} ml** extra, um von {last_kh} auf {target_kh} dKH zu steigen.")
     
     if res1.button("✅ Neue Tagesdosis für KH aktivieren"):
-        setup_values["KH_Dosis"] = d_kh
-        setup_values["KH_Verbrauch"] = v_kh
-        new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
+        # Schreibt den ermittelten Wert direkt in die Setup-Tabelle
+        new_setup_kh = pd.DataFrame({
+            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
+            "Wert": [s_vol, s_brand_kh, s_brand_ca, d_kh, s_ca_d, s_kh_f, s_ca_f, v_kh, setup_values["CA_Verbrauch"]]
+        })
+        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_kh)
         st.cache_data.clear()
-        st.success("Dosis übernommen!")
+        st.success(f"Dosis von {d_kh} ml dauerhaft im Setup aktiviert!")
         st.rerun()
 else:
     res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
@@ -221,79 +200,54 @@ if v_ca is not None:
         res2.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_ca} ml** extra, um von {last_ca} auf {target_ca} mg/l zu steigen.")
     
     if res2.button("✅ Neue Tagesdosis für Ca aktivieren"):
-        setup_values["CA_Dosis"] = d_ca
-        setup_values["CA_Verbrauch"] = v_ca
-        new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
+        # Schreibt den ermittelten Wert direkt in die Setup-Tabelle
+        new_setup_ca = pd.DataFrame({
+            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
+            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], v_ca]
+        })
+        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_ca)
         st.cache_data.clear()
-        st.success("Dosis übernommen!")
+        st.success(f"Dosis von {d_ca} ml dauerhaft im Setup aktiviert!")
         st.rerun()
 else:
-    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte on neue Messdaten...")
+    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf neue Messdaten...")
     res2.info(f"Letzter gespeicherter Ca Verbrauch: **{setup_values['CA_Verbrauch']} mg/l/Tag**")
 
 # --- HISTORIE & LIVE-EDIT-FUNKTION ---
 st.divider()
-# Der Expander bleibt standardmäßig offen, um Fehler sofort sichtbar zu machen
 with st.expander("📊 Historie & Verlauf", expanded=True):
     h1, h2 = st.columns(2)
     
-    # --- KH-SPALTE ---
     with h1:
         st.subheader(f"{s_brand_kh} Verlauf & Editor")
         if not df_kh.empty:
-            # 1. Diagramm zeichnen
             st.line_chart(df_kh.set_index("Datum")["Wert"])
-            
-            # 2. Interaktiver Dateneditor
-            st.caption("📝 Werte anklicken zum Editieren. Zeilen markieren + 'Entf' zum Löschen.")
             edited_kh = st.data_editor(
-                df_kh, 
-                num_rows="dynamic", 
-                key="editor_kh",
+                df_kh, num_rows="dynamic", key="editor_kh",
                 column_config={
                     "Datum": st.column_config.TextColumn("Datum (YYYY-MM-DD)"),
                     "Wert": st.column_config.NumberColumn("Messwert", format="%.2f"),
                     "Zugabe": st.column_config.NumberColumn("Zugabe (ml)", format="%.1f")
-                },
-                use_container_width=True
+                }, use_container_width=True
             )
-            
-            # 3. Speicher-Trigger
             if st.button("💾 Änderungen für KH speichern"):
                 conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=edited_kh)
                 st.cache_data.clear()
-                st.success("KH-Daten erfolgreich aktualisiert!")
                 st.rerun()
-        else:
-            st.info("Keine KH-Historiendaten gefunden.")
 
-    # --- CA-SPALTE ---
     with h2:
         st.subheader(f"{s_brand_ca} Verlauf & Editor")
         if not df_ca.empty:
-            # 1. Diagramm zeichnen
             st.line_chart(df_ca.set_index("Datum")["Wert"])
-            
-            # 2. Interaktiver Dateneditor
-            st.caption("📝 Werte anklicken zum Editieren. Zeilen markieren + 'Entf' zum Löschen.")
             edited_ca = st.data_editor(
-                df_ca, 
-                num_rows="dynamic", 
-                key="editor_ca",
+                df_ca, num_rows="dynamic", key="editor_ca",
                 column_config={
                     "Datum": st.column_config.TextColumn("Datum (YYYY-MM-DD)"),
                     "Wert": st.column_config.NumberColumn("Messwert", format="%d"),
                     "Zugabe": st.column_config.NumberColumn("Zugabe (ml)", format="%.1f")
-                },
-                use_container_width=True
+                }, use_container_width=True
             )
-            
-            # 3. Speicher-Trigger
             if st.button("💾 Änderungen für Ca speichern"):
                 conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=edited_ca)
                 st.cache_data.clear()
-                st.success("Ca-Daten erfolgreich aktualisiert!")
                 st.rerun()
-        else:
-            st.info("Keine Calcium-Historiendaten gefunden.")
