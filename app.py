@@ -86,18 +86,38 @@ with st.sidebar:
         st.success("Setup gespeichert!")
         st.rerun()
 
-# --- DATEN LADEN ---
-df_kh = load_data("KH")
-df_ca = load_data("CA")
+# --- DATEN LADEN & STRIPTE BEREINIGUNG ---
+raw_kh = load_data("KH")
+raw_ca = load_data("CA")
 
-# Spalten-Integrität erzwingen & sicherstellen, dass "Zugabe" überall existiert
-for df in [df_kh, df_ca]:
-    if not df.empty:
-        if "DataFrame" in df.columns:
-            df.rename(columns={"DataFrame": "Datum"}, inplace=True)
-        if "Zugabe" not in df.columns:
-            df["Zugabe"] = 0.0
-        df["Zugabe"] = pd.to_numeric(df["Zugabe"]).fillna(0.0)
+def clean_dataframe(df):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Datum", "Wert", "Zugabe"])
+    
+    d = df.copy()
+    # Fehlerhafte Spaltennamen aus vorherigen Iterationen fixen
+    if "DataFrame" in d.columns:
+        d.rename(columns={"DataFrame": "Datum"}, inplace=True)
+    
+    # Sicherstellen, dass die Mindestspalten da sind
+    if "Datum" not in d.columns:
+        d["Datum"] = str(datetime.now().date())
+    if "Wert" not in d.columns:
+        d["Wert"] = 0.0
+    if "Zugabe" not in d.columns:
+        d["Zugabe"] = 0.0
+        
+    # Typen erzwingen und Zeilen ohne Werte droppen
+    d["Wert"] = pd.to_numeric(d["Wert"], errors='coerce')
+    d["Zugabe"] = pd.to_numeric(d["Zugabe"], errors='coerce').fillna(0.0)
+    d = d.dropna(subset=["Wert"])
+    
+    # Sortierung nach Datum gewährleisten
+    d["Datum"] = d["Datum"].astype(str)
+    return d[["Datum", "Wert", "Zugabe"]].reset_index(drop=True)
+
+df_kh = clean_dataframe(raw_kh)
+df_ca = clean_dataframe(raw_ca)
 
 st.title("🌊 Zauberflos AquaCalc Cloud")
 
@@ -143,12 +163,11 @@ st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
 res1, res2 = st.columns(2)
 
 def calculate_aquarium_strict(df, running_dosis, vol, factor, target_val, is_ca=False):
-    if df is not None and not df.empty and "Datum" in df.columns and len(df) >= 2:
+    if df is not None and len(df) >= 2:
+        # Lokale Kopie für Berechnung mit echten Datetime-Objekten
         d = df.copy()
-        d["Datum"] = pd.to_datetime(d["Datum"])
-        d["Wert"] = pd.to_numeric(d["Wert"])
-        d["Zugabe"] = pd.to_numeric(d.get("Zugabe", 0.0)).fillna(0.0)
-        d = d.dropna(subset=["Wert"]).sort_values("Datum")
+        d["Datum"] = pd.to_datetime(d["Datum"], errors='coerce')
+        d = d.dropna(subset=["Datum"]).sort_values("Datum")
         
         if len(d) >= 2:
             last = d.iloc[-1]   
@@ -186,4 +205,95 @@ if v_kh is not None:
         setup_values["KH_Verbrauch"] = v_kh
         new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
-        st.cache
+        st.cache_data.clear()
+        st.success("Dosis übernommen!")
+        st.rerun()
+else:
+    res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
+    res1.info(f"Letzter gespeicherter KH Verbrauch: **{setup_values['KH_Verbrauch']} dKH/Tag**")
+
+# --- AUSGABE CA ---
+v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_strict(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
+if v_ca is not None:
+    res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
+    res2.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_ca} mg/l/Tag**")
+    if up_ca > 0:
+        res2.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_ca} ml** extra, um von {last_ca} auf {target_ca} mg/l zu steigen.")
+    
+    if res2.button("✅ Neue Tagesdosis für Ca aktivieren"):
+        setup_values["CA_Dosis"] = d_ca
+        setup_values["CA_Verbrauch"] = v_ca
+        new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
+        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
+        st.cache_data.clear()
+        st.success("Dosis übernommen!")
+        st.rerun()
+else:
+    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte on neue Messdaten...")
+    res2.info(f"Letzter gespeicherter Ca Verbrauch: **{setup_values['CA_Verbrauch']} mg/l/Tag**")
+
+# --- HISTORIE & LIVE-EDIT-FUNKTION ---
+st.divider()
+# Der Expander bleibt standardmäßig offen, um Fehler sofort sichtbar zu machen
+with st.expander("📊 Historie & Verlauf", expanded=True):
+    h1, h2 = st.columns(2)
+    
+    # --- KH-SPALTE ---
+    with h1:
+        st.subheader(f"{s_brand_kh} Verlauf & Editor")
+        if not df_kh.empty:
+            # 1. Diagramm zeichnen
+            st.line_chart(df_kh.set_index("Datum")["Wert"])
+            
+            # 2. Interaktiver Dateneditor
+            st.caption("📝 Werte anklicken zum Editieren. Zeilen markieren + 'Entf' zum Löschen.")
+            edited_kh = st.data_editor(
+                df_kh, 
+                num_rows="dynamic", 
+                key="editor_kh",
+                column_config={
+                    "Datum": st.column_config.TextColumn("Datum (YYYY-MM-DD)"),
+                    "Wert": st.column_config.NumberColumn("Messwert", format="%.2f"),
+                    "Zugabe": st.column_config.NumberColumn("Zugabe (ml)", format="%.1f")
+                },
+                use_container_width=True
+            )
+            
+            # 3. Speicher-Trigger
+            if st.button("💾 Änderungen für KH speichern"):
+                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=edited_kh)
+                st.cache_data.clear()
+                st.success("KH-Daten erfolgreich aktualisiert!")
+                st.rerun()
+        else:
+            st.info("Keine KH-Historiendaten gefunden.")
+
+    # --- CA-SPALTE ---
+    with h2:
+        st.subheader(f"{s_brand_ca} Verlauf & Editor")
+        if not df_ca.empty:
+            # 1. Diagramm zeichnen
+            st.line_chart(df_ca.set_index("Datum")["Wert"])
+            
+            # 2. Interaktiver Dateneditor
+            st.caption("📝 Werte anklicken zum Editieren. Zeilen markieren + 'Entf' zum Löschen.")
+            edited_ca = st.data_editor(
+                df_ca, 
+                num_rows="dynamic", 
+                key="editor_ca",
+                column_config={
+                    "Datum": st.column_config.TextColumn("Datum (YYYY-MM-DD)"),
+                    "Wert": st.column_config.NumberColumn("Messwert", format="%d"),
+                    "Zugabe": st.column_config.NumberColumn("Zugabe (ml)", format="%.1f")
+                },
+                use_container_width=True
+            )
+            
+            # 3. Speicher-Trigger
+            if st.button("💾 Änderungen für Ca speichern"):
+                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=edited_ca)
+                st.cache_data.clear()
+                st.success("Ca-Daten erfolgreich aktualisiert!")
+                st.rerun()
+        else:
+            st.info("Keine Calcium-Historiendaten gefunden.")
