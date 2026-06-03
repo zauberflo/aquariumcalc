@@ -90,6 +90,15 @@ with st.sidebar:
 df_kh = load_data("KH")
 df_ca = load_data("CA")
 
+# Spalten-Integrität erzwingen & sicherstellen, dass "Zugabe" überall existiert
+for df in [df_kh, df_ca]:
+    if not df.empty:
+        if "DataFrame" in df.columns:
+            df.rename(columns={"DataFrame": "Datum"}, inplace=True)
+        if "Zugabe" not in df.columns:
+            df["Zugabe"] = 0.0
+        df["Zugabe"] = pd.to_numeric(df["Zugabe"]).fillna(0.0)
+
 st.title("🌊 Zauberflos AquaCalc Cloud")
 
 # --- MESSWERTE EINGEBEN & AUTO-SAVE DOSIERUNG ---
@@ -116,7 +125,6 @@ with c_in2:
     ca_val = st.number_input("Messwert (mg/l)", step=1, key="cin")
     ca_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=5.0, key="c_extra")
     if st.button("💾 Ca Speichern"):
-        # KORREKTUR: Hier steht jetzt wieder sauber "Datum" statt "DataFrame"
         new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": str(datetime.now().date()), "Wert": float(ca_val), "Zugabe": float(ca_extra)}])], ignore_index=True)
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
         
@@ -178,61 +186,4 @@ if v_kh is not None:
         setup_values["KH_Verbrauch"] = v_kh
         new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
-        st.cache_data.clear()
-        st.success("Dosis übernommen!")
-        st.rerun()
-else:
-    res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
-    res1.info(f"Letzter gespeicherter KH Verbrauch: **{setup_values['KH_Verbrauch']} dKH/Tag**")
-
-# --- AUSGABE CA ---
-v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_strict(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
-if v_ca is not None:
-    res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
-    res2.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_ca} mg/l/Tag**")
-    if up_ca > 0:
-        res2.warning(f"🔺 **Einmalige Zugabe:** Dosiere einmalig **{up_ca} ml** extra, um von {last_ca} auf {target_ca} mg/l zu steigen.")
-    
-    if res2.button("✅ Neue Tagesdosis für Ca aktivieren"):
-        setup_values["CA_Dosis"] = d_ca
-        setup_values["CA_Verbrauch"] = v_ca
-        new_s = pd.DataFrame({"Parameter": list(setup_values.keys()), "Wert": list(setup_values.values())})
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_s)
-        st.cache_data.clear()
-        st.success("Dosis übernommen!")
-        st.rerun()
-else:
-    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte on neue Messdaten...")
-    res2.info(f"Letzter gespeicherter Ca Verbrauch: **{setup_values['CA_Verbrauch']} mg/l/Tag**")
-
-# --- HISTORIE & DIAGRAMME ---
-st.divider()
-with st.expander("📊 Historie & Verlauf", expanded=True):
-    h1, h2 = st.columns(2)
-    
-    with h1:
-        st.subheader(f"{s_brand_kh} Verlauf (dKH)")
-        if not df_kh.empty and "Datum" in df_kh.columns and "Wert" in df_kh.columns:
-            try:
-                chart_kh = df_kh.copy()
-                chart_kh = chart_kh.dropna(subset=["Datum", "Wert"])
-                st.line_chart(chart_kh.set_index("Datum")["Wert"])
-            except:
-                st.warning("KH Diagramm kann nicht gerendert werden (Formatfehler im Sheet).")
-        else:
-            st.info("Keine KH-Historiendaten gefunden.")
-
-    with h2:
-        st.subheader(f"{s_brand_ca} Verlauf (mg/l)")
-        if not df_ca.empty and ("Datum" in df_ca.columns or "DataFrame" in df_ca.columns) and "Wert" in df_ca.columns:
-            try:
-                chart_ca = df_ca.copy()
-                # Falls in deinem Sheet noch fälschlicherweise "DataFrame" als Spaltenname steht, reparieren wir das hier temporär für das Diagramm:
-                if "DataFrame" in chart_ca.columns and "Datum" not in chart_ca.columns:
-                    chart_ca = chart_ca.rename(columns={"DataFrame": "Datum"})
-                chart_ca = chart_ca.dropna(subset=["Datum", "Wert"])
-                st.line_chart(chart_ca.set_index("Datum")["Wert"])
-            except:
-                st.warning("Ca Diagramm kann nicht gerendert werden (Formatfehler im Sheet).")
-        else:
-            st.info("Keine Calcium-Historiendaten gefunden.")
+        st.cache
