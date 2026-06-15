@@ -216,68 +216,53 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
     with h1:
         st.subheader(f"{s_brand_kh} Verlauf & Editor")
         if not df_kh.empty:
+            # 1. Verlaufsgrafik
             st.line_chart(df_kh.set_index("Datum")["Wert"])
             
-            st.caption("🗑️ **Zeile Löschen:** Links das Kästchen der Zeile markieren und auf der Tastatur 'Entf' drücken.")
-            edited_kh = st.data_editor(
-                df_kh, num_rows="dynamic", key="editor_kh",
-                column_config={
-                    "Datum": st.column_config.TextColumn("Datum (YYYY-MM-DD)"),
-                    "Wert": st.column_config.NumberColumn("Messwert", format="%.2f"),
-                    "Zugabe": st.column_config.NumberColumn("Zugabe (ml)", format="%.1f")
-                }, use_container_width=True
-            )
+            # 2. Schreibgeschützte Tabelle zur Kontrolle
+            st.dataframe(df_kh, use_container_width=True)
             
-            if st.button("💾 Änderungen für KH speichern"):
-                # 1. Bereinigen (Zeilen ohne Datum/Wert fliegen raus)
-                clean_edited_kh = edited_kh.dropna(subset=["Datum", "Wert"]).copy()
+            # 3. Sicheres Lösch-Werkzeug
+            st.markdown("🗑️ **Eintrag löschen**")
+            # Wir erstellen eine Liste aller verfügbaren Daten für das Dropdown
+            kh_dates = df_kh["Datum"].unique().tolist()
+            selected_kh_date = st.selectbox("Datum auswählen zum Löschen:", options=kh_dates, key="del_kh_date")
+            
+            if st.button("❌ Ausgewählten KH-Eintrag löschen", type="secondary"):
+                # Filtert alle Zeilen heraus, die dem ausgewählten Datum entsprechen
+                new_df_kh = df_kh[df_kh["Datum"] != selected_kh_date]
                 
-                # 2. Trick gegen "Geisterzeilen": Wenn die neue Tabelle kürzer ist als die alte,
-                # füllen wir die Differenz mit leeren Zeilen auf, um die alten Daten im Sheet zu überschreiben.
-                diff = len(df_kh) - len(clean_edited_kh)
-                if diff > 0:
-                    empty_rows = pd.DataFrame([{"Datum": "", "Wert": "", "Zugabe": ""} for _ in range(diff)])
-                    save_df_kh = pd.concat([clean_edited_kh, empty_rows], ignore_index=True)
-                else:
-                    save_df_kh = clean_edited_kh
-                
-                # 3. Upload über die Standard-Funktion (ohne interne API-Zugriffe)
-                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=save_df_kh)
+                # Hochladen der neuen, gefilterten Tabelle
+                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_df_kh)
                 st.cache_data.clear()
-                st.success("KH-Tabelle erfolgreich aktualisiert!")
+                st.success(f"Eintrag vom {selected_kh_date} wurde gelöscht!")
                 st.rerun()
+        else:
+            st.info("Keine KH-Historiendaten gefunden.")
 
     # --- CA-SPALTE ---
     with h2:
         st.subheader(f"{s_brand_ca} Verlauf & Editor")
         if not df_ca.empty:
+            # 1. Verlaufsgrafik
             st.line_chart(df_ca.set_index("Datum")["Wert"])
             
-            st.caption("🗑️ **Zeile Löschen:** Links das Kästchen der Zeile markieren und auf der Tastatur 'Entf' drücken.")
-            edited_ca = st.data_editor(
-                df_ca, num_rows="dynamic", key="editor_ca",
-                column_config={
-                    "Datum": st.column_config.TextColumn("Datum (YYYY-MM-DD)"),
-                    "Wert": st.column_config.NumberColumn("Messwert", format="%d"),
-                    "Zugabe": st.column_config.NumberColumn("Zugabe (ml)", format="%.1f")
-                }, use_container_width=True
-            )
+            # 2. Schreibgeschützte Tabelle zur Kontrolle
+            st.dataframe(df_ca, use_container_width=True)
             
-            if st.button("💾 Änderungen für Ca speichern"):
-                # 1. Bereinigen
-                clean_edited_ca = edited_ca.dropna(subset=["Datum", "Wert"]).copy()
+            # 3. Sicheres Lösch-Werkzeug
+            st.markdown("🗑️ **Eintrag löschen**")
+            ca_dates = df_ca["Datum"].unique().tolist()
+            selected_ca_date = st.selectbox("Datum auswählen zum Löschen:", options=ca_dates, key="del_ca_date")
+            
+            if st.button("❌ Ausgewählten Ca-Eintrag löschen", type="secondary"):
+                # Filtert alle Zeilen heraus, die dem ausgewählten Datum entsprechen
+                new_df_ca = df_ca[df_ca["Datum"] != selected_ca_date]
                 
-                # 2. Trick gegen "Geisterzeilen"
-                diff = len(df_ca) - len(clean_edited_ca)
-                if diff > 0:
-                    empty_rows = pd.DataFrame([{"Datum": "", "Wert": "", "Zugabe": ""} for _ in range(diff)])
-                    save_df_ca = pd.concat([clean_edited_ca, empty_rows], ignore_index=True)
-                else:
-                    save_df_ca = clean_edited_ca
-                
-                # 3. Upload
-                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=save_df_ca)
+                # Hochladen der neuen, gefilterten Tabelle
+                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_df_ca)
                 st.cache_data.clear()
-                st.success("Ca-Tabelle erfolgreich aktualisiert!")
+                st.success(f"Eintrag vom {selected_ca_date} wurde gelöscht!")
                 st.rerun()
-                st.rerun()
+        else:
+            st.info("Keine Calcium-Historiendaten gefunden.")
