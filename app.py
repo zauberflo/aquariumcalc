@@ -212,12 +212,13 @@ st.divider()
 with st.expander("📊 Historie & Verlauf", expanded=True):
     h1, h2 = st.columns(2)
     
+    # --- KH-SPALTE ---
     with h1:
         st.subheader(f"{s_brand_kh} Verlauf & Editor")
         if not df_kh.empty:
             st.line_chart(df_kh.set_index("Datum")["Wert"])
             
-            st.caption("🗑️ **Zeile Löschen:** Links die Zeile markieren (Häkchen) und auf der Tastatur 'Entf' drücken.")
+            st.caption("🗑️ **Zeile Löschen:** Links das Kästchen der Zeile markieren und auf der Tastatur 'Entf' drücken.")
             edited_kh = st.data_editor(
                 df_kh, num_rows="dynamic", key="editor_kh",
                 column_config={
@@ -228,25 +229,31 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
             )
             
             if st.button("💾 Änderungen für KH speichern"):
-                # CRITICAL FIX: Erzwingt das Bereinigen gelöschter/geänderter Zeilen
+                # Erzwingt das Bereinigen fehlerhafter Zeilen
                 clean_edited_kh = edited_kh.dropna(subset=["Datum", "Wert"])
                 
-                # Sheet komplett mit leeren Zeilen überschreiben, um Überhänge zu killen
-                empty_df = pd.DataFrame(columns=["Datum", "Wert", "Zugabe"])
-                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=empty_df)
+                # ECHTES LÖSCHEN über den gspread-Client im Hintergrund
+                try:
+                    client = conn._client
+                    spreadsheet = client.open_by_url(SHEET_URL)
+                    worksheet = spreadsheet.worksheet("KH")
+                    worksheet.clear()  # Fegt das gesamte Tabellenblatt in der Cloud leer
+                except Exception as e:
+                    st.error(f"Fehler beim Leeren des KH-Sheets: {e}")
                 
-                # Frische Daten hochladen
+                # Frische Daten ohne Altlasten hochladen
                 conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=clean_edited_kh)
                 st.cache_data.clear()
                 st.success("KH-Tabelle erfolgreich neu geschrieben!")
                 st.rerun()
 
+    # --- CA-SPALTE ---
     with h2:
         st.subheader(f"{s_brand_ca} Verlauf & Editor")
         if not df_ca.empty:
             st.line_chart(df_ca.set_index("Datum")["Wert"])
             
-            st.caption("🗑️ **Zeile Löschen:** Links die Zeile markieren (Häkchen) und auf der Tastatur 'Entf' drücken.")
+            st.caption("🗑️ **Zeile Löschen:** Links das Kästchen der Zeile markieren und auf der Tastatur 'Entf' drücken.")
             edited_ca = st.data_editor(
                 df_ca, num_rows="dynamic", key="editor_ca",
                 column_config={
@@ -257,14 +264,19 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
             )
             
             if st.button("💾 Änderungen für Ca speichern"):
-                # CRITICAL FIX: Erzwingt das Bereinigen gelöschter/geänderter Zeilen
+                # Erzwingt das Bereinigen fehlerhafter Zeilen
                 clean_edited_ca = edited_ca.dropna(subset=["Datum", "Wert"])
                 
-                # Sheet komplett leeren
-                empty_df = pd.DataFrame(columns=["Datum", "Wert", "Zugabe"])
-                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=empty_df)
+                # ECHTES LÖSCHEN über den gspread-Client im Hintergrund
+                try:
+                    client = conn._client
+                    spreadsheet = client.open_by_url(SHEET_URL)
+                    worksheet = spreadsheet.worksheet("CA")
+                    worksheet.clear()  # Fegt das gesamte Tabellenblatt in der Cloud leer
+                except Exception as e:
+                    st.error(f"Fehler beim Leeren des Ca-Sheets: {e}")
                 
-                # Frische Daten hochladen
+                # Frische Daten ohne Altlasten hochladen
                 conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=clean_edited_ca)
                 st.cache_data.clear()
                 st.success("Ca-Tabelle erfolgreich neu geschrieben!")
