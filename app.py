@@ -229,22 +229,22 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
             )
             
             if st.button("💾 Änderungen für KH speichern"):
-                # Erzwingt das Bereinigen fehlerhafter Zeilen
-                clean_edited_kh = edited_kh.dropna(subset=["Datum", "Wert"])
+                # 1. Bereinigen (Zeilen ohne Datum/Wert fliegen raus)
+                clean_edited_kh = edited_kh.dropna(subset=["Datum", "Wert"]).copy()
                 
-                # ECHTES LÖSCHEN über den gspread-Client im Hintergrund
-                try:
-                    client = conn._client
-                    spreadsheet = client.open_by_url(SHEET_URL)
-                    worksheet = spreadsheet.worksheet("KH")
-                    worksheet.clear()  # Fegt das gesamte Tabellenblatt in der Cloud leer
-                except Exception as e:
-                    st.error(f"Fehler beim Leeren des KH-Sheets: {e}")
+                # 2. Trick gegen "Geisterzeilen": Wenn die neue Tabelle kürzer ist als die alte,
+                # füllen wir die Differenz mit leeren Zeilen auf, um die alten Daten im Sheet zu überschreiben.
+                diff = len(df_kh) - len(clean_edited_kh)
+                if diff > 0:
+                    empty_rows = pd.DataFrame([{"Datum": "", "Wert": "", "Zugabe": ""} for _ in range(diff)])
+                    save_df_kh = pd.concat([clean_edited_kh, empty_rows], ignore_index=True)
+                else:
+                    save_df_kh = clean_edited_kh
                 
-                # Frische Daten ohne Altlasten hochladen
-                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=clean_edited_kh)
+                # 3. Upload über die Standard-Funktion (ohne interne API-Zugriffe)
+                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=save_df_kh)
                 st.cache_data.clear()
-                st.success("KH-Tabelle erfolgreich neu geschrieben!")
+                st.success("KH-Tabelle erfolgreich aktualisiert!")
                 st.rerun()
 
     # --- CA-SPALTE ---
@@ -264,20 +264,20 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
             )
             
             if st.button("💾 Änderungen für Ca speichern"):
-                # Erzwingt das Bereinigen fehlerhafter Zeilen
-                clean_edited_ca = edited_ca.dropna(subset=["Datum", "Wert"])
+                # 1. Bereinigen
+                clean_edited_ca = edited_ca.dropna(subset=["Datum", "Wert"]).copy()
                 
-                # ECHTES LÖSCHEN über den gspread-Client im Hintergrund
-                try:
-                    client = conn._client
-                    spreadsheet = client.open_by_url(SHEET_URL)
-                    worksheet = spreadsheet.worksheet("CA")
-                    worksheet.clear()  # Fegt das gesamte Tabellenblatt in der Cloud leer
-                except Exception as e:
-                    st.error(f"Fehler beim Leeren des Ca-Sheets: {e}")
+                # 2. Trick gegen "Geisterzeilen"
+                diff = len(df_ca) - len(clean_edited_ca)
+                if diff > 0:
+                    empty_rows = pd.DataFrame([{"Datum": "", "Wert": "", "Zugabe": ""} for _ in range(diff)])
+                    save_df_ca = pd.concat([clean_edited_ca, empty_rows], ignore_index=True)
+                else:
+                    save_df_ca = clean_edited_ca
                 
-                # Frische Daten ohne Altlasten hochladen
-                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=clean_edited_ca)
+                # 3. Upload
+                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=save_df_ca)
                 st.cache_data.clear()
-                st.success("Ca-Tabelle erfolgreich neu geschrieben!")
+                st.success("Ca-Tabelle erfolgreich aktualisiert!")
+                st.rerun()
                 st.rerun()
