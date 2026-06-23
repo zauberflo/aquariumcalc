@@ -22,15 +22,29 @@ def load_data(sheet_name):
     except: return pd.DataFrame()
 
 def clean_df(df):
-    if df is None or df.empty: return pd.DataFrame(columns=["Datum", "Wert", "Zugabe", "IntervallDosis"])
+    # Wenn leer, leeres Grundgerüst erstellen
+    if df is None or df.empty: 
+        return pd.DataFrame(columns=["Datum", "Wert", "Zugabe", "IntervallDosis"])
+    
     d = df.copy()
-    if "DataFrame" in d.columns: d.rename(columns={"DataFrame": "Datum"}, inplace=True)
+    
+    # Spaltennamen normalisieren, falls 'DataFrame' als Spalte gelandet ist
+    if "DataFrame" in d.columns: 
+        d.rename(columns={"DataFrame": "Datum"}, inplace=True)
+    
+    # --- HIER IST DIE REPARATUR ---
+    # Prüfen ob Spalten existieren, falls nicht: mit 0/leer auffüllen
+    if "Wert" not in d.columns: d["Wert"] = 0.0
+    if "Zugabe" not in d.columns: d["Zugabe"] = 0.0
+    if "IntervallDosis" not in d.columns: d["IntervallDosis"] = 0.0
+    
+    # Jetzt sicher umwandeln
     d["Wert"] = pd.to_numeric(d["Wert"], errors='coerce')
     d["Zugabe"] = pd.to_numeric(d["Zugabe"], errors='coerce').fillna(0.0)
     d["IntervallDosis"] = pd.to_numeric(d["IntervallDosis"], errors='coerce').fillna(0.0)
+    
     d["Datum"] = d["Datum"].astype(str).replace("nan", str(datetime.now().date()))
     return d[["Datum", "Wert", "Zugabe", "IntervallDosis"]].reset_index(drop=True)
-
 # 1. SETUP-DATEN LADEN
 df_setup = load_data("Setup")
 setup_vals = {"Volumen": 572.0, "KH_Brand": "Oceamo Duo KH", "CA_Brand": "Oceamo Duo Ca", "KH_Dosis": 12.0, "CA_Dosis": 15.0, "KH_Faktor": 10.0, "CA_Faktor": 14.0, "KH_Verbrauch": 0.0, "CA_Verbrauch": 0.0}
