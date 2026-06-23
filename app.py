@@ -216,9 +216,7 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
     return None, None, None, None, None
 
 # --- AUSGABE KH ---
-# Diese Zeile muss linksbündig stehen (ohne Einrückung)
 v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vB(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
-
 if v_kh is not None:
     res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
     res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
@@ -226,20 +224,14 @@ if v_kh is not None:
         res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
     
     if res1.button("✅ Neue Tagesdosis für KH aktivieren"):
-        # 1. Setup updaten
         new_setup_kh = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, d_kh, s_ca_d, s_kh_f, s_ca_f, v_kh, setup_values["CA_Verbrauch"]]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_kh)
-        
-        # 2. Den letzten Eintrag im KH-Sheet mit der NEUEN Dosis markieren
-        df_kh.at[df_kh.index[-1], "IntervallDosis"] = d_kh
-        conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=df_kh)
-        
         st.cache_data.clear()
+        st.success(f"Dosis von {d_kh} ml dauerhaft im Setup aktiviert!")
         st.rerun()
-        
 else:
     res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
 
@@ -252,19 +244,14 @@ if v_ca is not None:
         res2.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_ca} ml** extra für Wunschwert ({target_ca} mg/l).")
     
     if res2.button("✅ Neue Tagesdosis für Ca aktivieren"):
-            # 1. Setup updaten
-            new_setup_ca = pd.DataFrame({
-                "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
-                "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], v_ca]
-            })
-            conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_ca)
-            
-            # 2. WICHTIG: Den letzten Eintrag im CA-Sheet mit der NEUEN Dosis markieren!
-            df_ca.at[df_ca.index[-1], "IntervallDosis"] = d_ca
-            conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=df_ca)
-            
-            st.cache_data.clear()
-            st.rerun()
+        new_setup_ca = pd.DataFrame({
+            "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
+            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_ca_f, s_ca_f, setup_values["KH_Verbrauch"], v_ca]
+        })
+        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_ca)
+        st.cache_data.clear()
+        st.success(f"Dosis von {d_ca} ml dauerhaft im Setup aktiviert!")
+        st.rerun()
 else:
     res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf neue Messdaten...")
 
