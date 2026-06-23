@@ -30,6 +30,7 @@ def clean_df(df):
     d["Datum"] = d["Datum"].astype(str).replace("nan", str(datetime.now().date()))
     return d[["Datum", "Wert", "Zugabe"]].reset_index(drop=True)
 
+# 1. SETUP-DATEN ZUERST AUS GOOGLE SHEET LADEN
 df_setup = load_data("Setup")
 setup_vals = {"Volumen": 572.0, "KH_Brand": "Oceamo Duo KH", "CA_Brand": "Oceamo Duo Ca", "KH_Dosis": 12.0, "CA_Dosis": 15.0, "KH_Faktor": 10.0, "CA_Faktor": 14.0, "KH_Verbrauch": 0.0, "CA_Verbrauch": 0.0}
 
@@ -40,6 +41,7 @@ if not df_setup.empty and "Parameter" in df_setup.columns:
             val = str(row["Wert"])
             setup_vals[p] = float(val) if val.replace('.','',1).isdigit() else row["Wert"]
 
+# 2. SESSION STATE REIN ALS RECHTE-BASIS NUTZEN (NUR INITIALISIEREN, NICHT ÜBERSCHREIBEN)
 if "kh_dosis_live" not in st.session_state: st.session_state.kh_dosis_live = float(setup_vals["KH_Dosis"])
 if "ca_dosis_live" not in st.session_state: st.session_state.ca_dosis_live = float(setup_vals["CA_Dosis"])
 
@@ -51,8 +53,11 @@ with st.sidebar:
     s_brand_ca = st.text_input("Marke Ca-Lösung", value=str(setup_vals["CA_Brand"]))
     
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=st.session_state.kh_dosis_live, format="%.1f")
-    s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=st.session_state.ca_dosis_live, format="%.1f")
+    # Direktes Binding an den Session State verhindert das Überschreiben beim Rerun
+    s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=st.session_state.kh_dosis_live, format="%.1f", key="input_kh_dosis")
+    s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=st.session_state.ca_dosis_live, format="%.1f", key="input_ca_dosis")
+    
+    # Synchronisiere State bei manueller Eingabe in der Sidebar
     st.session_state.kh_dosis_live = s_kh_d
     st.session_state.ca_dosis_live = s_ca_d
     
@@ -62,7 +67,7 @@ with st.sidebar:
     target_ca = st.number_input("Wunsch-Calcium", value=420, step=5)
 
     if st.button("💾 Setup manuell speichern"):
-        df_new = pd.DataFrame({"Parameter": list(setup_vals.keys()), "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, s_ca_d, s_kh_f, s_ca_f, setup_vals["KH_Verbrauch"], setup_vals["CA_Verbrauch"]]})
+        df_new = pd.DataFrame({"Parameter": list(setup_vals.keys()), "Wert": [s_vol, s_brand_kh, s_brand_ca, st.session_state.kh_dosis_live, st.session_state.ca_dosis_live, s_kh_f, s_ca_f, setup_vals["KH_Verbrauch"], setup_vals["CA_Verbrauch"]]})
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=df_new)
         st.cache_data.clear()
         st.success("Setup gespeichert!")
@@ -77,8 +82,8 @@ today_str = str(datetime.now().date())
 
 # --- DYNAMISCHE SEKTIONEN FÜR KH & CA ---
 cfg = {
-    "KH": {"df": df_kh, "brand": s_brand_kh, "current_d": s_kh_d, "factor": s_kh_f, "target": target_kh, "is_ca": False, "col": c_in1, "unit": "dKH", "step": 1.0, "val_default": 7.5},
-    "CA": {"df": df_ca, "brand": s_brand_ca, "current_d": s_ca_d, "factor": s_ca_f, "target": target_ca, "is_ca": True, "col": c_in2, "unit": "mg/l", "step": 5.0, "val_default": 420}
+    "KH": {"df": df_kh, "brand": s_brand_kh, "current_d": st.session_state.kh_dosis_live, "factor": s_kh_f, "target": target_kh, "is_ca": False, "col": c_in1, "unit": "dKH", "step": 1.0, "val_default": 7.5},
+    "CA": {"df": df_ca, "brand": s_brand_ca, "current_d": st.session_state.ca_dosis_live, "factor": s_ca_f, "target": target_ca, "is_ca": True, "col": c_in2, "unit": "mg/l", "step": 5.0, "val_default": 420}
 }
 
 def calculate_aquarium_strict_vC(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
