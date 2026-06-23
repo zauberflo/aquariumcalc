@@ -112,11 +112,3 @@ def calculate_aquarium_strict_vC(df, current_setup_dosis, vol, factor, target_va
                 diff_to_target = target_val - last["Wert"]
                 einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
                 return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
-    return None, None, None, None, None
-
-for key, c in cfg.items():
-    with c["col"]:
-        st.subheader(f"🧪 {c['brand']} Messung")
-        only_ex = st.checkbox("Nur Extra-Zugabe buchen", key=f"only_{key}")
-        val_in = st.number_input(f"Messwert ({c['unit']})", value=float(c['val_default']), disabled=only_ex, key=f"v_{key}")
-        ext_
