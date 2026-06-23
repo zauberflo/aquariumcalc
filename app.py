@@ -50,9 +50,12 @@ if not df_setup.empty and "Parameter" in df_setup.columns:
             except:
                 setup_values[p] = row["Wert"]
 
+# --- HIER IST DER FIX: Alle Variablen VOR der Sidebar sauber definieren ---
 s_vol = float(setup_values["Volumen"])
 s_brand_kh = str(setup_values["KH_Brand"])
 s_brand_ca = str(setup_values["CA_Brand"])
+s_kh_f = float(setup_values["KH_Faktor"])
+s_ca_f = float(setup_values["CA_Faktor"])
 
 # Initialisiere Session State für die Dosierungen, falls noch nicht vorhanden
 if "kh_dosis_live" not in st.session_state:
@@ -141,84 +144,3 @@ with c_in1:
                 new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": today_str, "Wert": None, "Zugabe": float(kh_extra)}])], ignore_index=True)
         else:
             new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": today_str, "Wert": float(kh_val), "Zugabe": float(kh_extra)}])], ignore_index=True)
-        
-        conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
-        st.cache_data.clear()
-        st.success("KH-Eintrag erfolgreich gespeichert!")
-        st.rerun()
-
-with c_in2:
-    st.subheader(f"🧪 {s_brand_ca} Messung & Zugabe")
-    only_extra_ca = st.checkbox("Nur manuelle Extra-Zugabe buchen (ohne neuen Messwert)", key="only_c")
-    
-    ca_val = st.number_input("Messwert (mg/l)", step=1, key="cin", disabled=only_extra_ca, value=420)
-    ca_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=5.0, key="c_extra")
-    
-    if st.button("💾 Ca Speichern"):
-        if only_extra_ca:
-            mask = df_ca["Datum"] == today_str
-            if mask.any():
-                df_ca.loc[mask, "Zugabe"] += float(ca_extra)
-                new_ca = df_ca
-            else:
-                new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": today_str, "Wert": None, "Zugabe": float(ca_extra)}])], ignore_index=True)
-        else:
-            new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": today_str, "Wert": float(ca_val), "Zugabe": float(ca_extra)}])], ignore_index=True)
-        
-        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
-        st.cache_data.clear()
-        st.success("Ca-Eintrag erfolgreich gespeichert!")
-        st.rerun()
-
-# --- EXAKTE STRIKTE BERECHNUNG ---
-st.divider()
-st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
-res1, res2 = st.columns(2)
-
-def calculate_aquarium_strict_vD(df, active_dosis, vol, factor, target_val, is_ca=False):
-    df_measured = df.dropna(subset=["Wert"]).copy()
-    
-    if df_measured is not None and len(df_measured) >= 2:
-        df_measured["Datum"] = pd.to_datetime(df_measured["Datum"], errors='coerce')
-        df_measured = df_measured.dropna(subset=["Datum"]).sort_values("Datum")
-        
-        if len(df_measured) >= 2:
-            last = df_measured.iloc[-1]   
-            prev = df_measured.iloc[-2]   
-            tage = (last["Datum"] - prev["Datum"]).days
-            
-            if tage > 0:
-                f_konzentration = factor / 10 if is_ca else factor
-                becken_diff_pro_tag = (prev["Wert"] - last["Wert"]) / tage
-                
-                # Wir berechnen den Verbrauch basierend auf der Dosis, die BIS JETZT aktiv war
-                dosis_wirkung_pro_tag = active_dosis / (vol / 100) / f_konzentration
-                
-                sub_df = df[(df["Datum"] >= str(prev["Datum"].date())) & (df["Datum"] < str(last["Datum"].date()))]
-                total_extra_zugabe = sub_df["Zugabe"].sum()
-                zugabe_wirkung_pro_tag = (total_extra_zugabe / (vol / 100) / f_konzentration) / tage
-                
-                v_real = round(becken_diff_pro_tag + dosis_wirkung_pro_tag + zugabe_wirkung_pro_tag, 3)
-                d_neu = round(v_real * (vol / 100) * f_konzentration, 1)
-                delta_ml = round(d_neu - active_dosis, 1)
-                
-                diff_to_target = target_val - last["Wert"]
-                einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
-                
-                return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
-                
-    return None, None, None, None, None
-
-# --- AUSGABE KH ---
-v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vD(df_kh, st.session_state.kh_dosis_live, s_vol, s_kh_f, target_kh, is_ca=False)
-if v_kh is not None:
-    # Wenn das berechnete Delta gegen Null geht, ist alles perfekt eingestellt
-    if abs(delta_kh) <= 0.1:
-        res1.success(f"🎉 **Tagesdosis optimal angepasst!** Pumpe läuft aktuell auf **{st.session_state.kh_dosis_live} ml**.")
-        res1.write(f"📉 Berechneter Verbrauch im letzten Intervall: **{v_kh} dKH/Tag**")
-    else:
-        res1.metric(f"Empfohlene Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
-        res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
-        
-        if res1.button("✅ Neue Tagesdosis für KH aktivieren", key="btn_kh_act"):
-            st.session_state.kh_dosis_live = d_kh
