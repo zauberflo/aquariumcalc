@@ -27,14 +27,17 @@ def clean_df(df):
     d = df.copy()
     if "DataFrame" in d.columns: d.rename(columns={"DataFrame": "Datum"}, inplace=True)
     
-    # Sicherstellen, dass die Spalte IntervallDosis existiert, um Abstürze zu verhindern
-    if "IntervallDosis" not in d.columns:
-        d["IntervallDosis"] = 0.0
-        
+    # Dynamisches Auffüllen, falls Spalten im Google Sheet fehlen (Verhindert White Screen)
+    if "Wert" not in d.columns: d["Wert"] = None
+    if "Zugabe" not in d.columns: d["Zugabe"] = 0.0
+    if "IntervallDosis" not in d.columns: d["IntervallDosis"] = 0.0
+    
     d["Wert"] = pd.to_numeric(d["Wert"], errors='coerce')
     d["Zugabe"] = pd.to_numeric(d["Zugabe"], errors='coerce').fillna(0.0)
     d["IntervallDosis"] = pd.to_numeric(d["IntervallDosis"], errors='coerce').fillna(0.0)
     d["Datum"] = d["Datum"].astype(str).replace("nan", str(datetime.now().date()))
+    
+    # Rückgabe inklusive der neuen Berechnungsspalte
     return d[["Datum", "Wert", "Zugabe", "IntervallDosis"]].reset_index(drop=True)
 
 # 1. SETUP-DATEN ZUERST AUS GOOGLE SHEET LADEN
@@ -48,7 +51,7 @@ if not df_setup.empty and "Parameter" in df_setup.columns:
             val = str(row["Wert"])
             setup_vals[p] = float(val) if val.replace('.','',1).isdigit() else row["Wert"]
 
-# 2. SESSION STATE ALS SINGLE SOURCE OF TRUTH INITIALISIEREN
+# 2. SESSION STATE REIN ALS RECHTE-BASIS NUTZEN (INITIALISIEREN ÜBER INPUT-KEYS)
 if "kh_dosis_live" not in st.session_state: st.session_state.kh_dosis_live = float(setup_vals["KH_Dosis"])
 if "ca_dosis_live" not in st.session_state: st.session_state.ca_dosis_live = float(setup_vals["CA_Dosis"])
 
@@ -60,7 +63,7 @@ with st.sidebar:
     s_brand_ca = st.text_input("Marke Ca-Lösung", value=str(setup_vals["CA_Brand"]))
     
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    # Direktes Widget-Binding über Key steuert den Zustand fehlerfrei
+    # Festes Widget-Binding verhindert State-Konflikte bei Reruns
     st.number_input(f"Dosis {s_brand_kh}", format="%.1f", key="kh_dosis_live")
     st.number_input(f"Dosis {s_brand_ca}", format="%.1f", key="ca_dosis_live")
     
@@ -118,4 +121,22 @@ def calculate_aquarium_strict_vC(df, current_setup_dosis, vol, factor, target_va
                 diff_to_target = target_val - last["Wert"]
                 einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
                 return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
-    return None, None, None, None,
+    return None, None, None, None, None
+
+for key, c in cfg.items():
+    with c["col"]:
+        st.subheader(f"🧪 {c['brand']} Messung")
+        only_ex = st.checkbox("Nur Extra-Zugabe buchen", key=f"only_{key}")
+        val_in = st.number_input(f"Messwert ({c['unit']})", value=float(c['val_default']), disabled=only_ex, key=f"v_{key}")
+        ext_in = st.number_input("Extra-Zugabe JETZT (ml)", value=0.0, step=c["step"], key=f"e_{key}")
+        
+        if st.button("💾 Speichern", key=f"save_{key}"):
+            new_row = {"Datum": today_str, "Wert": None if only_ex else float(val_in), "Zugabe": float(ext_in), "IntervallDosis": float(c["current_d"])}
+            updated_df = pd.concat([c["df"], pd.DataFrame([new_row])], ignore_index=True)
+            conn.update(spreadsheet=SHEET_URL, worksheet=key, data=updated_df)
+            st.cache_data.clear()
+            st.rerun()
+
+st.divider()
+st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
+res1
