@@ -216,14 +216,15 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
     return None, None, None, None, None
 
 # --- AUSGABE KH ---
-v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vB(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
-if v_kh is not None:
-    res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
-    res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
-    if up_kh > 0:
-        res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
+    v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vB(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
     
-   if res1.button("✅ Neue Tagesdosis für KH aktivieren"):
+    if v_kh is not None:
+        res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
+        res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
+        if up_kh > 0:
+            res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
+        
+        if res1.button("✅ Neue Tagesdosis für KH aktivieren"):
             # 1. Setup updaten
             new_setup_kh = pd.DataFrame({
                 "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
@@ -231,12 +232,15 @@ if v_kh is not None:
             })
             conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_kh)
             
-            # 2. WICHTIG: Den letzten Eintrag im KH-Sheet mit der NEUEN Dosis markieren!
+            # 2. Den letzten Eintrag im KH-Sheet mit der NEUEN Dosis markieren
             df_kh.at[df_kh.index[-1], "IntervallDosis"] = d_kh
             conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=df_kh)
             
             st.cache_data.clear()
             st.rerun()
+            
+    else:
+        res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
 
 # --- AUSGABE CA ---
 v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_strict_vB(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
