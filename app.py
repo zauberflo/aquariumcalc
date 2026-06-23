@@ -69,8 +69,9 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=s_kh_d, format="%.1f")
-    s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=s_ca_d, format="%.1f")
+    # DYNAMIC VALUE FIX: Der Key ändert sich mit dem echten Wert, was Streamlit zum Neuzeichnen zwingt!
+    s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=s_kh_d, format="%.1f", key=f"sidebar_kh_{s_kh_d}")
+    s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=s_ca_d, format="%.1f", key=f"sidebar_ca_{s_ca_d}")
     
     st.divider()
     st.subheader("Produkt-Parameter")
@@ -179,127 +180,4 @@ def calculate_aquarium_strict_vC(df, current_setup_dosis, vol, factor, target_va
     
     if df_measured is not None and len(df_measured) >= 2:
         df_measured["Datum"] = pd.to_datetime(df_measured["Datum"], errors='coerce')
-        df_measured = df_measured.dropna(subset=["Datum"]).sort_values("Datum")
-        
-        if len(df_measured) >= 2:
-            last = df_measured.iloc[-1]   
-            prev = df_measured.iloc[-2]   
-            tage = (last["Datum"] - prev["Datum"]).days
-            
-            if tage > 0:
-                f_konzentration = factor / 10 if is_ca else factor
-                becken_diff_pro_tag = (prev["Wert"] - last["Wert"]) / tage
-                
-                if "IntervallDosis" in prev and prev["IntervallDosis"] > 0:
-                    historische_dosis = prev["IntervallDosis"]
-                else:
-                    historische_dosis = current_setup_dosis
-                
-                dosis_wirkung_pro_tag = historische_dosis / (vol / 100) / f_konzentration
-                
-                sub_df = df[(df["Datum"] >= str(prev["Datum"].date())) & (df["Datum"] < str(last["Datum"].date()))]
-                total_extra_zugabe = sub_df["Zugabe"].sum()
-                zugabe_wirkung_pro_tag = (total_extra_zugabe / (vol / 100) / f_konzentration) / tage
-                
-                v_real = round(becken_diff_pro_tag + dosis_wirkung_pro_tag + zugabe_wirkung_pro_tag, 3)
-                d_neu = round(v_real * (vol / 100) * f_konzentration, 1)
-                
-                delta_ml = round(d_neu - historische_dosis, 1)
-                
-                diff_to_target = target_val - last["Wert"]
-                einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
-                
-                return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
-                
-    return None, None, None, None, None
-
-# --- AUSGABE KH ---
-v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vC(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
-if v_kh is not None:
-    dosis_bereits_aktiv = (abs(d_kh - s_kh_d) < 0.1)
-    
-    if dosis_bereits_aktiv:
-        res1.success(f"🎉 **Tagesdosis optimal angepasst!** Pumpe läuft aktuell auf **{s_kh_d} ml**.")
-        res1.write(f"📉 Berechneter Verbrauch im letzten Intervall: **{v_kh} dKH/Tag**")
-    else:
-        res1.metric(f"Empfohlene Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. Intervall-Basis")
-        res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
-        
-        if res1.button("✅ Neue Tagesdosis für KH aktivieren", key="btn_kh_act"):
-            new_setup_kh = pd.DataFrame({
-                "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
-                "Wert": [s_vol, s_brand_kh, s_brand_ca, d_kh, s_ca_d, s_kh_f, s_ca_f, v_kh, setup_values["CA_Verbrauch"]]
-            })
-            conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_kh)
-            st.cache_data.clear()
-            st.rerun()
-
-    if up_kh > 0 and not dosis_bereits_aktiv:
-        res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
-else:
-    res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
-
-# --- AUSGABE CA ---
-v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_strict_vC(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
-if v_ca is not None:
-    dosis_bereits_aktiv_ca = (abs(d_ca - s_ca_d) < 0.1)
-    
-    if dosis_bereits_aktiv_ca:
-        res2.success(f"🎉 **Tagesdosis optimal angepasst!** Pumpe läuft aktuell auf **{s_ca_d} ml**.")
-        res2.write(f"📉 Berechneter Verbrauch im letzten Intervall: **{v_ca} mg/l/Tag**")
-    else:
-        res2.metric(f"Empfohlene Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. Intervall-Basis")
-        res2.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_ca} mg/l/Tag**")
-        
-        if res2.button("✅ Neue Tagesdosis für Ca aktivieren", key="btn_ca_act"):
-            new_setup_ca = pd.DataFrame({
-                "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
-                "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_ca_f, s_ca_f, setup_values["KH_Verbrauch"], v_ca]
-            })
-            conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_ca)
-            st.cache_data.clear()
-            st.rerun()
-
-    if up_ca > 0 and not dosis_bereits_aktiv_ca:
-        res2.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_ca} ml** extra für Wunschwert ({target_ca} mg/l).")
-else:
-    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte on neue Messdaten...")
-
-# --- HISTORIE & LIVE-EDIT-FUNKTION ---
-st.divider()
-with st.expander("📊 Historie & Verlauf", expanded=True):
-    h1, h2 = st.columns(2)
-    
-    with h1:
-        st.subheader(f"{s_brand_kh} Verlauf & Editor")
-        if not df_kh.empty:
-            st.line_chart(df_kh.dropna(subset=["Wert"]).set_index("Datum")["Wert"])
-            st.dataframe(df_kh, use_container_width=True)
-            
-            st.markdown("🗑️ **Eintrag löschen**")
-            kh_dates = df_kh["Datum"].unique().tolist()
-            selected_kh_date = st.selectbox("Datum auswählen zum Löschen:", options=kh_dates, key="del_kh_date")
-            
-            if st.button("❌ Ausgewählten KH-Eintrag löschen", type="secondary"):
-                new_df_kh = df_kh[df_kh["Datum"] != selected_kh_date]
-                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_df_kh)
-                st.cache_data.clear()
-                st.success(f"Eintrag vom {selected_kh_date} wurde gelöscht!")
-                st.rerun()
-
-    with h2:
-        st.subheader(f"{s_brand_ca} Verlauf & Editor")
-        if not df_ca.empty:
-            st.line_chart(df_ca.dropna(subset=["Wert"]).set_index("Datum")["Wert"])
-            st.dataframe(df_ca, use_container_width=True)
-            
-            st.markdown("🗑️ **Eintrag löschen**")
-            ca_dates = df_ca["Datum"].unique().tolist()
-            selected_ca_date = st.selectbox("Datum auswählen zum Löschen:", options=ca_dates, key="del_ca_date")
-            
-            if st.button("❌ Ausgewählten Ca-Eintrag löschen", type="secondary"):
-                new_df_ca = df_ca[df_ca["Datum"] != selected_ca_date]
-                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_df_ca)
-                st.cache_data.clear()
-                st.success(f"Eintrag vom {selected_ca_date} wurde gelöscht!")
-                st.rerun()
+        df_measured = df_measured.dropna(subset=["Datum"]).
