@@ -106,3 +106,40 @@ raw_ca = load_data("CA")
 
 def clean_dataframe(df):
     if df is None or df.empty:
+        return pd.DataFrame(columns=["Datum", "Wert", "Zugabe"])
+    d = df.copy()
+    if "DataFrame" in d.columns:
+        d.rename(columns={"DataFrame": "Datum"}, inplace=True)
+    if "Datum" not in d.columns: d["Datum"] = str(datetime.now().date())
+    
+    d["Wert"] = pd.to_numeric(d["Wert"], errors='coerce')
+    d["Zugabe"] = pd.to_numeric(d["Zugabe"], errors='coerce').fillna(0.0)
+    d["Datum"] = d["Datum"].astype(str)
+    return d[["Datum", "Wert", "Zugabe"]].reset_index(drop=True)
+
+df_kh = clean_dataframe(raw_kh)
+df_ca = clean_dataframe(raw_ca)
+
+st.title("🌊 Zauberflos AquaCalc Cloud")
+
+# --- MESSWERTE EINGEBEN ---
+c_in1, c_in2 = st.columns(2)
+today_str = str(datetime.now().date())
+
+with c_in1:
+    st.subheader(f"🧪 {s_brand_kh} Messung & Zugabe")
+    only_extra_kh = st.checkbox("Nur manuelle Extra-Zugabe buchen (ohne neuen Messwert)", key="only_k")
+    
+    kh_val = st.number_input("Messwert (dKH)", format="%.2f", key="kin", disabled=only_extra_kh, value=7.5)
+    kh_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=1.0, key="k_extra")
+    
+    if st.button("💾 KH Speichern"):
+        if only_extra_kh:
+            mask = df_kh["Datum"] == today_str
+            if mask.any():
+                df_kh.loc[mask, "Zugabe"] += float(kh_extra)
+                new_kh = df_kh
+            else:
+                new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": today_str, "Wert": None, "Zugabe": float(kh_extra)}])], ignore_index=True)
+        else:
+            new_kh = pd.concat(
