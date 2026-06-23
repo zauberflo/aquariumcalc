@@ -219,6 +219,9 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
 v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vB(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
     res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
+    res1.info(f"💡 **Info:** Nach einer Dosisänderung kann die berechnete Entwicklung "
+              f"erst nach der nächsten Messung wieder präzise sein, "
+              f"da der aktuelle Verlauf noch auf der alten Dosis basiert.")
     res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
     if up_kh > 0:
         res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
@@ -239,6 +242,9 @@ else:
 v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_strict_vB(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
 if v_ca is not None:
     res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
+    res12info(f"💡 **Info:** Nach einer Dosisänderung kann die berechnete Entwicklung "
+              f"erst nach der nächsten Messung wieder präzise sein, "
+              f"da der aktuelle Verlauf noch auf der alten Dosis basiert.")
     res2.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_ca} mg/l/Tag**")
     if up_ca > 0:
         res2.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_ca} ml** extra für Wunschwert ({target_ca} mg/l).")
