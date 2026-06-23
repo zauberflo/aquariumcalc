@@ -142,4 +142,12 @@ with c_in1:
             else:
                 new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": today_str, "Wert": None, "Zugabe": float(kh_extra)}])], ignore_index=True)
         else:
-            new_kh = pd.concat(
+            new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": today_str, "Wert": float(kh_val), "Zugabe": float(kh_extra)}])], ignore_index=True)
+        
+        conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
+        st.cache_data.clear()
+        st.success("KH-Eintrag erfolgreich gespeichert!")
+        st.rerun()
+
+with c_in2:
+    st.subheader(f"🧪 {s
