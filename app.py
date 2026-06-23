@@ -126,4 +126,42 @@ with c_in2:
     ca_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=5.0, key="c_extra")
     if st.button("💾 Ca Speichern"):
         new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": today_str, "Wert": None if only_extra_ca else float(ca_val), "Zugabe": float(ca_extra), "IntervallDosis": float(s_ca_d)}])], ignore_index=True)
-        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca
+        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
+        st.cache_data.clear(); st.rerun()
+
+# --- BERECHNUNGSFUNKTION ---
+def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
+    df_measured = df.dropna(subset=["Wert"]).sort_values("Datum")
+    if len(df_measured) >= 2:
+        last, prev = df_measured.iloc[-1], df_measured.iloc[-2]
+        tage = (pd.to_datetime(last["Datum"]) - pd.to_datetime(prev["Datum"])).days
+        if tage > 0:
+            f_konz = factor / 10 if is_ca else factor
+            v_real = ((prev["Wert"] - last["Wert"]) / tage) + ((prev["IntervallDosis"] if prev["IntervallDosis"] > 0 else current_setup_dosis) / (vol/100) / f_konz) + ((df[(df["Datum"] >= prev["Datum"]) & (df["Datum"] < last["Datum"])]["Zugabe"].sum() / (vol/100) / f_konz) / tage)
+            d_neu = round(v_real * (vol/100) * f_konz, 1)
+            return round(v_real, 3), d_neu, round(d_neu - current_setup_dosis, 1), round((target_val - last["Wert"]) * (vol/100) * f_konz, 1)
+    return None, None, None, None
+
+# --- BERECHNUNG & AKTIVIERUNG ---
+st.divider()
+res1, res2 = st.columns(2)
+
+for res, df, s_d, brand, factor, target, is_ca, name in [(res1, df_kh, s_kh_d, s_brand_kh, s_kh_f, target_kh, False, "KH"), (res2, df_ca, s_ca_d, s_brand_ca, s_ca_f, target_ca, True, "CA")]:
+    v, d, delta, up = calculate_aquarium_strict_vB(df, s_d, s_vol, factor, target, is_ca)
+    if v:
+        res.metric(f"Neue Tagesdosis {brand}", f"{d} ml", f"{delta} ml vs. bisher")
+        if res.button(f"✅ Neue Tagesdosis für {name} aktivieren"):
+            # Update Setup
+            new_setup = pd.DataFrame({"Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"], "Wert": [s_vol, s_brand_kh, s_brand_ca, d if name=="KH" else s_kh_d, d if name=="CA" else s_ca_d, s_kh_f, s_ca_f, v if name=="KH" else setup_values["KH_Verbrauch"], v if name=="CA" else setup_values["CA_Verbrauch"]]})
+            conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup)
+            # Update Sheet History (Der entscheidende Fix)
+            data_fresh = load_data(name)
+            data_fresh.at[data_fresh.index[-1], "IntervallDosis"] = d
+            conn.update(spreadsheet=SHEET_URL, worksheet=name, data=data_fresh)
+            st.rerun()
+    else: res.metric(f"Aktuelle Dosis {brand}", f"{s_d} ml", "Warte auf Messdaten...")
+
+# --- HISTORIE ---
+with st.expander("📊 Historie"):
+    h1, h2 = st.columns(2)
+    h1.dataframe(df_kh); h2.dataframe(df_ca)
