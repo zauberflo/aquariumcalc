@@ -81,7 +81,6 @@ st.title("🌊 Zauberflos AquaCalc Cloud")
 c_in1, c_in2 = st.columns(2)
 today_str = str(datetime.now().date())
 
-# --- DYNAMISCHE SEKTIONEN FÜR KH & CA ---
 cfg = {
     "KH": {"df": df_kh, "brand": s_brand_kh, "current_d": st.session_state.kh_dosis_live, "factor": s_kh_f, "target": target_kh, "is_ca": False, "col": c_in1, "unit": "dKH", "step": 1.0, "val_default": 7.5},
     "CA": {"df": df_ca, "brand": s_brand_ca, "current_d": st.session_state.ca_dosis_live, "factor": s_ca_f, "target": target_ca, "is_ca": True, "col": c_in2, "unit": "mg/l", "step": 5.0, "val_default": 420}
@@ -114,7 +113,11 @@ def calculate_aquarium_strict_vC(df, current_setup_dosis, vol, factor, target_va
                 
                 v_real = round(becken_diff_pro_tag + dosis_wirkung_pro_tag + zugabe_wirkung_pro_tag, 3)
                 d_neu = round(v_real * (vol / 100) * f_konzentration, 1)
-                delta_ml = round(d_neu - historische_dosis, 1)
+                
+                # WICHTIG: Das Delta wird jetzt gegen die Dosis gerechnet, die im JETZIGEN (letzten) Eintrag hinterlegt ist!
+                aktuelle_basis = last["IntervallDosis"] if ("IntervallDosis" in last and last["IntervallDosis"] > 0) else current_setup_dosis
+                delta_ml = round(d_neu - aktuelle_basis, 1)
+                
                 diff_to_target = target_val - last["Wert"]
                 einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
                 return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
@@ -157,8 +160,16 @@ for key, c in cfg.items():
                 final_kh_dosis = d_neu if key == "KH" else st.session_state.kh_dosis_live
                 final_ca_dosis = d_neu if key == "CA" else st.session_state.ca_dosis_live
                 
+                # 1. Setup Sheet aktualisieren
                 df_save = pd.DataFrame({"Parameter": list(setup_vals.keys()), "Wert": [s_vol, s_brand_kh, s_brand_ca, final_kh_dosis, final_ca_dosis, s_kh_f, s_ca_f, v_real if key=="KH" else setup_vals["KH_Verbrauch"], v_real if key=="CA" else setup_vals["CA_Verbrauch"]]})
                 conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=df_save)
+                
+                # FIX: Aktualisiere AUCH die IntervallDosis in der letzten Zeile des KH/CA Datenblatts
+                modified_df = c["df"].copy()
+                if not modified_df.empty:
+                    modified_df.at[modified_df.index[-1], "IntervallDosis"] = d_neu
+                    conn.update(spreadsheet=SHEET_URL, worksheet=key, data=modified_df)
+                
                 st.cache_data.clear()
                 st.rerun()
         if einmalig > 0 and not dosis_bereits_aktiv:
