@@ -157,4 +157,28 @@ for key, c in cfg.items():
                 final_kh_dosis = d_neu if key == "KH" else st.session_state.kh_dosis_live
                 final_ca_dosis = d_neu if key == "CA" else st.session_state.ca_dosis_live
                 
-                df_save = pd.DataFrame({"Parameter": list(setup_vals.keys()), "Wert": [s_vol, s_brand_kh, s_brand_ca, final_kh_dosis, final_ca_dosis, s_kh_f, s_ca_f, v_real if key=="KH" else setup_vals["KH_Verbrauch"], v_real if key=="CA"
+                # Setup Sheet aktualisieren
+                df_save = pd.DataFrame({
+                    "Parameter": list(setup_vals.keys()), 
+                    "Wert": [
+                        s_vol, 
+                        s_brand_kh, 
+                        s_brand_ca, 
+                        final_kh_dosis, 
+                        final_ca_dosis, 
+                        s_kh_f, 
+                        s_ca_f, 
+                        v_real if key == "KH" else setup_vals["KH_Verbrauch"], 
+                        v_real if key == "CA" else setup_vals["CA_Verbrauch"]
+                    ]
+                })
+                conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=df_save)
+                
+                # Aktualisiere auch die IntervallDosis im Datenblatt
+                modified_df = c["df"].copy()
+                if not modified_df.empty:
+                    modified_df.at[modified_df.index[-1], "IntervallDosis"] = d_neu
+                    conn.update(spreadsheet=SHEET_URL, worksheet=key, data=modified_df)
+                
+                st.cache_data.clear()
+                st.rerun()
