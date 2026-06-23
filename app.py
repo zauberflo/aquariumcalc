@@ -224,20 +224,21 @@ if v_kh is not None:
         res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
     
     if res1.button("✅ Neue Tagesdosis für KH aktivieren"):
-            # 1. Setup updaten
+            # 1. Setup-Daten aktualisieren
             new_setup_kh = pd.DataFrame({
                 "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
                 "Wert": [s_vol, s_brand_kh, s_brand_ca, d_kh, s_ca_d, s_kh_f, s_ca_f, v_kh, setup_values["CA_Verbrauch"]]
             })
             conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_kh)
             
-            # 2. Den LETZTEN Eintrag im KH-Sheet mit der NEUEN Dosis markieren
-            # Damit weiß die Berechnung beim nächsten Mal, dass ab diesem Datum 31,4 ml galten.
-            df_kh.at[df_kh.index[-1], "IntervallDosis"] = d_kh
-            conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=df_kh)
+            # 2. KH-Daten laden, um sicherzugehen, dass wir den aktuellsten Stand bearbeiten
+            current_kh_data = load_data("KH")
+            if not current_kh_data.empty:
+                # Den letzten Eintrag im Sheet direkt aktualisieren
+                current_kh_data.at[current_kh_data.index[-1], "IntervallDosis"] = d_kh
+                conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=current_kh_data)
             
             st.cache_data.clear()
-            st.success(f"Dosis von {d_kh} ml dauerhaft aktiviert!")
             st.rerun()
 else:
     res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
