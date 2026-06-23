@@ -86,32 +86,8 @@ cfg = {
     "CA": {"df": df_ca, "brand": s_brand_ca, "current_d": st.session_state.ca_dosis_live, "factor": s_ca_f, "target": target_ca, "is_ca": True, "col": c_in2, "unit": "mg/l", "step": 5.0, "val_default": 420}
 }
 
-# --- RECHEN-LOGIK (FIXIERT) ---
+# --- RECHEN-LOGIK ---
 def calculate_aquarium_strict_vC(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
-    df_measured = df.dropna(subset=["Wert"]).copy()
-    if df_measured is not None and len(df_measured) >= 2:
-        df_measured["Datum_dt"] = pd.to_datetime(df_measured["Datum"], errors='coerce')
-        df_measured = df_measured.dropna(subset=["Datum_dt"]).sort_values("Datum_dt")
-        if len(df_measured) >= 2:
-            last = df_measured.iloc[-1]   
-            prev = df_measured.iloc[-2]   
-            tage = (last["Datum_dt"] - prev["Datum_dt"]).days
-            if tage > 0:
-                f_konzentration = factor / 10 if is_ca else factor
-                becken_diff_pro_tag = (prev["Wert"] - last["Wert"]) / tage
-                
-                # FIX: Das vergangene Intervall lief mit der Dosis, die zum Startpunkt (prev) eingetragen war.
-                # Falls dort 0 steht, greifen wir auf das Setup als Fallback zurück.
-                if "IntervallDosis" in prev and float(prev["IntervallDosis"]) > 0:
-                    historische_dosis = float(prev["IntervallDosis"])
-                else:
-                    historische_dosis = current_setup_dosis
-                
-                dosis_wirkung_pro_tag = historische_dosis / (vol / 100) / f_konzentration
-                
-                sub_df = df[(df["Datum"] >= str(prev["Datum_dt"].date())) & (df["Datum"] < str(last["Datum_dt"].date()))]
-                total_extra_zugabe = sub_df["Zugabe"].sum()
-                zugabe_wirkung_pro_tag = (total_extra_zugabe / (vol / 100) / f_konzentration) / tage
-                
-                # Der reale Verbrauch im geschlossenen Intervall
-                v_real = round(becken_diff_pro_tag + dosis_wirkung_pro_tag + zugabe_wirkung_pro_tag, 3)
+    try:
+        df_measured = df.dropna(subset=["Wert"]).copy()
+        if df
