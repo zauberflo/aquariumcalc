@@ -27,7 +27,6 @@ def clean_df(df):
     d = df.copy()
     if "DataFrame" in d.columns: d.rename(columns={"DataFrame": "Datum"}, inplace=True)
     
-    # Dynamisches Auffüllen, falls Spalten im Google Sheet fehlen (Verhindert White Screen)
     if "Wert" not in d.columns: d["Wert"] = None
     if "Zugabe" not in d.columns: d["Zugabe"] = 0.0
     if "IntervallDosis" not in d.columns: d["IntervallDosis"] = 0.0
@@ -36,8 +35,6 @@ def clean_df(df):
     d["Zugabe"] = pd.to_numeric(d["Zugabe"], errors='coerce').fillna(0.0)
     d["IntervallDosis"] = pd.to_numeric(d["IntervallDosis"], errors='coerce').fillna(0.0)
     d["Datum"] = d["Datum"].astype(str).replace("nan", str(datetime.now().date()))
-    
-    # Rückgabe inklusive der neuen Berechnungsspalte
     return d[["Datum", "Wert", "Zugabe", "IntervallDosis"]].reset_index(drop=True)
 
 # 1. SETUP-DATEN ZUERST AUS GOOGLE SHEET LADEN
@@ -51,7 +48,6 @@ if not df_setup.empty and "Parameter" in df_setup.columns:
             val = str(row["Wert"])
             setup_vals[p] = float(val) if val.replace('.','',1).isdigit() else row["Wert"]
 
-# 2. SESSION STATE REIN ALS RECHTE-BASIS NUTZEN (INITIALISIEREN ÜBER INPUT-KEYS)
 if "kh_dosis_live" not in st.session_state: st.session_state.kh_dosis_live = float(setup_vals["KH_Dosis"])
 if "ca_dosis_live" not in st.session_state: st.session_state.ca_dosis_live = float(setup_vals["CA_Dosis"])
 
@@ -63,7 +59,6 @@ with st.sidebar:
     s_brand_ca = st.text_input("Marke Ca-Lösung", value=str(setup_vals["CA_Brand"]))
     
     st.subheader("Aktuelle Dosierung (ml/Tag)")
-    # Festes Widget-Binding verhindert State-Konflikte bei Reruns
     st.number_input(f"Dosis {s_brand_kh}", format="%.1f", key="kh_dosis_live")
     st.number_input(f"Dosis {s_brand_ca}", format="%.1f", key="ca_dosis_live")
     
@@ -86,57 +81,6 @@ st.title("🌊 Zauberflos AquaCalc Cloud")
 c_in1, c_in2 = st.columns(2)
 today_str = str(datetime.now().date())
 
-# --- DYNAMISCHE SEKTIONEN FÜR KH & CA ---
 cfg = {
     "KH": {"df": df_kh, "brand": s_brand_kh, "current_d": st.session_state.kh_dosis_live, "factor": s_kh_f, "target": target_kh, "is_ca": False, "col": c_in1, "unit": "dKH", "step": 1.0, "val_default": 7.5},
-    "CA": {"df": df_ca, "brand": s_brand_ca, "current_d": st.session_state.ca_dosis_live, "factor": s_ca_f, "target": target_ca, "is_ca": True, "col": c_in2, "unit": "mg/l", "step": 5.0, "val_default": 420}
-}
-
-def calculate_aquarium_strict_vC(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
-    df_measured = df.dropna(subset=["Wert"]).copy()
-    if df_measured is not None and len(df_measured) >= 2:
-        df_measured["Datum"] = pd.to_datetime(df_measured["Datum"], errors='coerce')
-        df_measured = df_measured.dropna(subset=["Datum"]).sort_values("Datum")
-        if len(df_measured) >= 2:
-            last = df_measured.iloc[-1]   
-            prev = df_measured.iloc[-2]   
-            tage = (last["Datum"] - prev["Datum"]).days
-            if tage > 0:
-                f_konzentration = factor / 10 if is_ca else factor
-                becken_diff_pro_tag = (prev["Wert"] - last["Wert"]) / tage
-                
-                if "IntervallDosis" in prev and prev["IntervallDosis"] > 0:
-                    historische_dosis = prev["IntervallDosis"]
-                else:
-                    historische_dosis = current_setup_dosis
-                
-                dosis_wirkung_pro_tag = historische_dosis / (vol / 100) / f_konzentration
-                sub_df = df[(df["Datum"] >= str(prev["Datum"].date())) & (df["Datum"] < str(last["Datum"].date()))]
-                total_extra_zugabe = sub_df["Zugabe"].sum()
-                zugabe_wirkung_pro_tag = (total_extra_zugabe / (vol / 100) / f_konzentration) / tage
-                
-                v_real = round(becken_diff_pro_tag + dosis_wirkung_pro_tag + zugabe_wirkung_pro_tag, 3)
-                d_neu = round(v_real * (vol / 100) * f_konzentration, 1)
-                delta_ml = round(d_neu - historische_dosis, 1)
-                diff_to_target = target_val - last["Wert"]
-                einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
-                return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
-    return None, None, None, None, None
-
-for key, c in cfg.items():
-    with c["col"]:
-        st.subheader(f"🧪 {c['brand']} Messung")
-        only_ex = st.checkbox("Nur Extra-Zugabe buchen", key=f"only_{key}")
-        val_in = st.number_input(f"Messwert ({c['unit']})", value=float(c['val_default']), disabled=only_ex, key=f"v_{key}")
-        ext_in = st.number_input("Extra-Zugabe JETZT (ml)", value=0.0, step=c["step"], key=f"e_{key}")
-        
-        if st.button("💾 Speichern", key=f"save_{key}"):
-            new_row = {"Datum": today_str, "Wert": None if only_ex else float(val_in), "Zugabe": float(ext_in), "IntervallDosis": float(c["current_d"])}
-            updated_df = pd.concat([c["df"], pd.DataFrame([new_row])], ignore_index=True)
-            conn.update(spreadsheet=SHEET_URL, worksheet=key, data=updated_df)
-            st.cache_data.clear()
-            st.rerun()
-
-st.divider()
-st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
-res1
+    "CA": {"df": df_ca, "brand": s_brand_ca, "current_d": st.session_state.ca_dosis_live, "factor": s_ca_f, "target": target_ca, "is_ca": True, "col
