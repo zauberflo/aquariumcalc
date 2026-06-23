@@ -37,7 +37,7 @@ def clean_df(df):
     d["Datum"] = d["Datum"].astype(str).replace("nan", str(datetime.now().date()))
     return d[["Datum", "Wert", "Zugabe", "IntervallDosis"]].reset_index(drop=True)
 
-# 1. SETUP-DATEN ZUERST AUS GOOGLE SHEET LADEN
+# 1. SETUP-DATEN LADEN
 df_setup = load_data("Setup")
 setup_vals = {"Volumen": 572.0, "KH_Brand": "Oceamo Duo KH", "CA_Brand": "Oceamo Duo Ca", "KH_Dosis": 12.0, "CA_Dosis": 15.0, "KH_Faktor": 10.0, "CA_Faktor": 14.0, "KH_Verbrauch": 0.0, "CA_Verbrauch": 0.0}
 
@@ -90,4 +90,56 @@ cfg = {
 def calculate_aquarium_strict_vC(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
     try:
         df_measured = df.dropna(subset=["Wert"]).copy()
-        if df
+        if df_measured is not None and len(df_measured) >= 2:
+            df_measured["Datum_dt"] = pd.to_datetime(df_measured["Datum"], errors='coerce')
+            df_measured = df_measured.dropna(subset=["Datum_dt"]).sort_values("Datum_dt")
+            if len(df_measured) >= 2:
+                last = df_measured.iloc[-1]   
+                prev = df_measured.iloc[-2]   
+                tage = (last["Datum_dt"] - prev["Datum_dt"]).days
+                if tage > 0:
+                    f_konzentration = factor / 10 if is_ca else factor
+                    becken_diff_pro_tag = (prev["Wert"] - last["Wert"]) / tage
+                    
+                    if "IntervallDosis" in prev and float(prev["IntervallDosis"]) > 0:
+                        historische_dosis = float(prev["IntervallDosis"])
+                    else:
+                        historische_dosis = current_setup_dosis
+                    
+                    dosis_wirkung_pro_tag = historische_dosis / (vol / 100) / f_konzentration
+                    sub_df = df[(df["Datum"] >= str(prev["Datum_dt"].date())) & (df["Datum"] < str(last["Datum_dt"].date()))]
+                    total_extra_zugabe = sub_df["Zugabe"].sum()
+                    zugabe_wirkung_pro_tag = (total_extra_zugabe / (vol / 100) / f_konzentration) / tage
+                    
+                    v_real = round(becken_diff_pro_tag + dosis_wirkung_pro_tag + zugabe_wirkung_pro_tag, 3)
+                    d_neu = round(v_real * (vol / 100) * f_konzentration, 1)
+                    delta_ml = round(d_neu - current_setup_dosis, 1)
+                    diff_to_target = target_val - last["Wert"]
+                    einmalig_ml = round(diff_to_target * (vol / 100) * f_konzentration, 1) if diff_to_target > 0 else 0.0
+                    return v_real, d_neu, delta_ml, einmalig_ml, last["Wert"]
+    except Exception as e:
+        st.error(f"Berechnungsfehler: {e}")
+    return None, None, None, None, None
+
+# --- UI ANZEIGE ---
+for key, c in cfg.items():
+    with c["col"]:
+        st.subheader(f"🧪 {c['brand']} Messung")
+        if st.button("💾 Speichern", key=f"save_{key}"):
+            new_row = {"Datum": today_str, "Wert": st.number_input(f"Messwert", value=float(c['val_default']), key=f"v_{key}"), "Zugabe": 0.0, "IntervallDosis": float(c["current_d"])}
+            conn.update(spreadsheet=SHEET_URL, worksheet=key, data=pd.concat([c["df"], pd.DataFrame([new_row])], ignore_index=True))
+            st.rerun()
+
+st.divider()
+st.header("⏱️ Aktuelle Entwicklung")
+res_cols = {"KH": st.columns(2)[0], "CA": st.columns(2)[1]}
+for key, c in cfg.items():
+    res = calculate_aquarium_strict_vC(c["df"], c["current_d"], s_vol, c["factor"], c["target"], c["is_ca"])
+    if res:
+        v_real, d_neu, delta, einmalig, _ = res
+        if abs(d_neu - c["current_d"]) < 0.1:
+            res_cols[key].success("Dosierung optimal!")
+        else:
+            if res_cols[key].button(f"✅ Übernehmen: {d_neu} ml", key=f"act_{key}"):
+                # Update Setup & Historie
+                modified_df
