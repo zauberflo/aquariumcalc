@@ -242,7 +242,7 @@ else:
 v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_strict_vB(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
 if v_ca is not None:
     res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
-    res12info(f"💡 **Info:** Nach einer Dosisänderung kann die berechnete Entwicklung "
+    res2.info(f"💡 **Info:** Nach einer Dosisänderung kann die berechnete Entwicklung "
               f"erst nach der nächsten Messung wieder präzise sein, "
               f"da der aktuelle Verlauf noch auf der alten Dosis basiert.")
     res2.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_ca} mg/l/Tag**")
