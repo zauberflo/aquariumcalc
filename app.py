@@ -91,7 +91,7 @@ with st.sidebar:
     target_kh = st.number_input("Wunsch-KH", value=7.5, step=0.1, format="%.1f")
     target_ca = st.number_input("Wunsch-Calcium", value=420, step=5)
 
-    if st.button("💾 Setup manuell保存 speichern"):
+    if st.button("💾 Setup manuell speichern"):
         new_setup = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, st.session_state.kh_dosis_live, st.session_state.ca_dosis_live, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], setup_values["CA_Verbrauch"]]
@@ -147,57 +147,4 @@ with c_in1:
         
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
         st.cache_data.clear()
-        st.success("KH-Eintrag erfolgreich gespeichert!")
-        st.rerun()
-
-with c_in2:
-    st.subheader(f"🧪 {s_brand_ca} Messung & Zugabe")
-    only_extra_ca = st.checkbox("Nur manuelle Extra-Zugabe buchen (ohne neuen Messwert)", key="only_c")
-    
-    ca_val = st.number_input("Messwert (mg/l)", step=1, key="cin", disabled=only_extra_ca, value=420)
-    ca_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, step=5.0, key="c_extra")
-    
-    if st.button("💾 Ca Speichern"):
-        if only_extra_ca:
-            mask = df_ca["Datum"] == today_str
-            if mask.any():
-                df_ca.loc[mask, "Zugabe"] += float(ca_extra)
-                new_ca = df_ca
-            else:
-                new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": today_str, "Wert": None, "Zugabe": float(ca_extra)}])], ignore_index=True)
-        else:
-            new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": today_str, "Wert": float(ca_val), "Zugabe": float(ca_extra)}])], ignore_index=True)
-        
-        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
-        st.cache_data.clear()
-        st.success("Ca-Eintrag erfolgreich gespeichert!")
-        st.rerun()
-
-# --- EXAKTE STRIKTE BERECHNUNG ---
-st.divider()
-st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
-res1, res2 = st.columns(2)
-
-def calculate_aquarium_strict_vD(df, active_dosis, vol, factor, target_val, is_ca=False):
-    df_measured = df.dropna(subset=["Wert"]).copy()
-    
-    if df_measured is not None and len(df_measured) >= 2:
-        df_measured["Datum"] = pd.to_datetime(df_measured["Datum"], errors='coerce')
-        df_measured = df_measured.dropna(subset=["Datum"]).sort_values("Datum")
-        
-        if len(df_measured) >= 2:
-            last = df_measured.iloc[-1]   
-            prev = df_measured.iloc[-2]   
-            tage = (last["Datum"] - prev["Datum"]).days
-            
-            if tage > 0:
-                f_konzentration = factor / 10 if is_ca else factor
-                becken_diff_pro_tag = (prev["Wert"] - last["Wert"]) / tage
-                
-                dosis_wirkung_pro_tag = active_dosis / (vol / 100) / f_konzentration
-                
-                sub_df = df[(df["Datum"] >= str(prev["Datum"].date())) & (df["Datum"] < str(last["Datum"].date()))]
-                total_extra_zugabe = sub_df["Zugabe"].sum()
-                zugabe_wirkung_pro_tag = (total_extra_zugabe / (vol / 100) / f_konzentration) / tage
-                
-                v_real = round(becken_diff_pro_tag + dosis_wirkung_pro_
+        st.success
