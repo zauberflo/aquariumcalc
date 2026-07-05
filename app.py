@@ -40,36 +40,47 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
             f_konz = factor / 10 if is_ca else factor
             becken_diff = prev["Wert"] - last["Wert"]
             hist_dosis = prev["IntervallDosis"] if prev["IntervallDosis"] > 0 else current_setup_dosis
-            
-            # Die Toleranz-Logik wurde hier komplett entfernt, um die Exaktheit der Berechnung sicherzustellen.
+            # Ohne Toleranz-Filter
             v_real = (becken_diff / tage) + (hist_dosis / (vol / 100) / f_konz)
-            
             d_neu = round(v_real * (vol / 100) * f_konz, 1)
             return round(v_real, 3), d_neu, round(d_neu - current_setup_dosis, 1), round((target_val - last["Wert"]) * (vol / 100) * f_konz, 1)
     return None, None, None, None
 
 # --- UI START ---
 st.title("🌊 Zauberflos AquaCalc Cloud")
+today_str = str(datetime.now().date())
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Aquarium Setup")
     s["Volumen"] = st.number_input("Beckenvolumen", value=s["Volumen"])
-    st.divider()
-    s["KH_Brand"] = st.text_input("Marke KH", value=s["KH_Brand"])
-    s["CA_Brand"] = st.text_input("Marke CA", value=s["CA_Brand"])
-    s["KH_Dosis"] = st.number_input("Dosis KH", value=s["KH_Dosis"])
-    s["CA_Dosis"] = st.number_input("Dosis CA", value=s["CA_Dosis"])
+    s["KH_Dosis"] = st.number_input("KH Dosis", value=s["KH_Dosis"])
+    s["CA_Dosis"] = st.number_input("CA Dosis", value=s["CA_Dosis"])
     if st.button("💾 Setup speichern"): st.success("Gespeichert!")
 
 # Datenreinigung
 def clean_df(df):
     d = df.copy()
+    if "Zugabe" not in d.columns: d["Zugabe"] = 0.0
     d["Wert"] = pd.to_numeric(d["Wert"], errors='coerce')
+    d["Zugabe"] = pd.to_numeric(d["Zugabe"], errors='coerce').fillna(0.0)
     d["IntervallDosis"] = pd.to_numeric(d["IntervallDosis"], errors='coerce').fillna(0.0)
     return d.reset_index(drop=True)
 
 df_kh, df_ca = clean_df(load_data("KH")), clean_df(load_data("CA"))
+
+# Eingabe-Bereich für Messungen & Extra-Zugaben
+c_in1, c_in2 = st.columns(2)
+for c, df, brand, d_set, key, worksheet in [(c_in1, df_kh, "KH", s["KH_Dosis"], "k", "KH"), (c_in2, df_ca, "CA", s["CA_Dosis"], "c", "CA")]:
+    with c:
+        st.subheader(f"🧪 {brand} buchen")
+        only_extra = st.checkbox(f"Nur manuelle Extra-Zugabe (keine Messung)", key=f"only_{key}")
+        val = st.number_input(f"Messwert", key=f"val_{key}", disabled=only_extra)
+        extra = st.number_input(f"Extra Zugabe (ml)", key=f"ex_{key}")
+        if st.button(f"💾 Speichern {brand}"):
+            new_row = {"Datum": today_str, "Wert": None if only_extra else val, "Zugabe": extra, "IntervallDosis": d_set}
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            conn.update(spreadsheet=SHEET_URL, worksheet=worksheet, data=df); st.rerun()
 
 # Berechnung & Anzeige
 res1, res2 = st.columns(2)
@@ -80,25 +91,16 @@ for res, df, d_set, brand, f, target, name in [(res1, df_kh, s["KH_Dosis"], s["K
         if res.button(f"✅ Aktivieren {name}"):
             df.at[df.index[-1], "IntervallDosis"] = d
             conn.update(spreadsheet=SHEET_URL, worksheet=name, data=df); st.rerun()
-    else: res.write(f"Warte auf {name} Daten...")
 
-# --- DAS ARCHIV / VERLAUF ---
+# Archiv
 st.divider()
 with st.expander("📊 Historie & Verlauf", expanded=True):
     h1, h2 = st.columns(2)
-    with h1:
-        st.subheader(f"{s['KH_Brand']} Verlauf")
-        st.line_chart(df_kh.dropna(subset=["Wert"]).set_index("Datum")["Wert"])
-        st.dataframe(df_kh, use_container_width=True)
-        d_kh = st.selectbox("Datum KH löschen:", df_kh["Datum"].unique(), key="del_kh")
-        if st.button("❌ KH löschen"):
-            conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=df_kh[df_kh["Datum"] != d_kh])
-            st.rerun()
-    with h2:
-        st.subheader(f"{s['CA_Brand']} Verlauf")
-        st.line_chart(df_ca.dropna(subset=["Wert"]).set_index("Datum")["Wert"])
-        st.dataframe(df_ca, use_container_width=True)
-        d_ca = st.selectbox("Datum CA löschen:", df_ca["Datum"].unique(), key="del_ca")
-        if st.button("❌ CA löschen"):
-            conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=df_ca[df_ca["Datum"] != d_ca])
-            st.rerun()
+    for h, df, name, ws, key in [(h1, df_kh, "KH", "KH", "del_kh"), (h2, df_ca, "CA", "CA", "del_ca")]:
+        with h:
+            st.subheader(name)
+            st.dataframe(df, use_container_width=True)
+            d_del = st.selectbox(f"Datum löschen:", df["Datum"].unique(), key=key)
+            if st.button(f"❌ {name} löschen"):
+                conn.update(spreadsheet=SHEET_URL, worksheet=ws, data=df[df["Datum"] != d_del])
+                st.rerun()
