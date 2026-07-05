@@ -177,6 +177,7 @@ st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
 res1, res2 = st.columns(2)
 
+# --- EXAKTE STRIKTE BERECHNUNG ---
 def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
     df["Datum"] = pd.to_datetime(df["Datum"], errors='coerce')
     df_m = df.dropna(subset=["Wert"]).sort_values("Datum")
@@ -192,22 +193,22 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
             # 2. Basis-Dosis Effekt
             dosis_effekt = current_setup_dosis / (vol / 100) / f_konz
             
-            # 3. Wenn du extra zugegeben hast, MUSST du diese Menge bei der Berechnung 
-            # der neuen Dosis abziehen, sonst "denkt" die App, das Becken braucht 
-            # die hohe Dosis PLUS die Extra-Zugabe.
+            # 3. Manuelle Zugaben im Intervall berücksichtigen
             zugabe_im_intervall = df[(df["Datum"] > prev["Datum"]) & (df["Datum"] <= last["Datum"])]["Zugabe"].sum()
             zugabe_effekt = (zugabe_im_intervall / tage) / (vol / 100) / f_konz
             
             # Berechnung v_real
-            # Wenn messwert_trend 0 ist, ist v_real = dosis_effekt - zugabe_effekt
-            # D.h. die App schlägt vor, die Dosis um genau deine Extra-Zugabe zu senken, 
-            # da du diese ja schon als Extra-ml gegeben hast.
             v_real = dosis_effekt + messwert_trend - zugabe_effekt
             
             d_neu = round(v_real * (vol / 100) * f_konz, 1)
             delta = round(d_neu - current_setup_dosis, 1)
-            return round(v_real, 3), d_neu, delta, round((target_val - last["Wert"]) * (vol / 100) * f_konz, 1)
-    return None, None, None, None
+            up = round((target_val - last["Wert"]) * (vol / 100) * f_konz, 1)
+            
+            # Rückgabe von 5 Werten, um den ValueError zu beheben
+            return round(v_real, 3), d_neu, delta, up, last["Wert"]
+    
+    # Rückgabe von 5 Werten (None) wenn keine Berechnung möglich
+    return None, None, None, None, None
     
 # --- AUSGABE KH ---
 v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vB(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
@@ -254,7 +255,7 @@ if v_ca is not None:
         st.rerun()
 else:
     res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf neue Messdaten...")
-
+    
 # --- HISTORIE & LIVE-EDIT-FUNKTION ---
 st.divider()
 with st.expander("📊 Historie & Verlauf", expanded=True):
