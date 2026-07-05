@@ -38,10 +38,17 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
         tage = (last["Datum"] - prev["Datum"]).days
         if tage > 0:
             f_konz = factor / 10 if is_ca else factor
-            becken_diff = prev["Wert"] - last["Wert"]
-            hist_dosis = prev["IntervallDosis"] if prev["IntervallDosis"] > 0 else current_setup_dosis
-            # Ohne Toleranz-Filter
-            v_real = (becken_diff / tage) + (hist_dosis / (vol / 100) / f_konz)
+            # Messwert-Trend
+            becken_diff = (prev["Wert"] - last["Wert"]) / tage
+            # Historische Dosis
+            dosis_effekt = (prev["IntervallDosis"] if prev["IntervallDosis"] > 0 else current_setup_dosis) / (vol / 100) / f_konz
+            # Manuelle Zugaben im Zeitraum berücksichtigen (um Korrekturen nicht als Verbrauch zu zählen!)
+            zugabe_im_intervall = df[(df["Datum"] > prev["Datum"]) & (df["Datum"] <= last["Datum"])]["Zugabe"].sum()
+            zugabe_effekt = (zugabe_im_intervall / tage) / (vol / 100) / f_konz
+            
+            # v_real ist der echte Verbrauch: (Messwert-Trend + Dosis) - manuelle Extra-Zugaben
+            v_real = becken_diff + dosis_effekt - zugabe_effekt
+            
             d_neu = round(v_real * (vol / 100) * f_konz, 1)
             return round(v_real, 3), d_neu, round(d_neu - current_setup_dosis, 1), round((target_val - last["Wert"]) * (vol / 100) * f_konz, 1)
     return None, None, None, None
@@ -69,7 +76,7 @@ def clean_df(df):
 
 df_kh, df_ca = clean_df(load_data("KH")), clean_df(load_data("CA"))
 
-# Eingabe-Bereich für Messungen & Extra-Zugaben
+# Eingabe-Bereich
 c_in1, c_in2 = st.columns(2)
 for c, df, brand, d_set, key, worksheet in [(c_in1, df_kh, "KH", s["KH_Dosis"], "k", "KH"), (c_in2, df_ca, "CA", s["CA_Dosis"], "c", "CA")]:
     with c:
@@ -82,7 +89,7 @@ for c, df, brand, d_set, key, worksheet in [(c_in1, df_kh, "KH", s["KH_Dosis"], 
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(spreadsheet=SHEET_URL, worksheet=worksheet, data=df); st.rerun()
 
-# Berechnung & Anzeige
+# Berechnung
 res1, res2 = st.columns(2)
 for res, df, d_set, brand, f, target, name in [(res1, df_kh, s["KH_Dosis"], s["KH_Brand"], s["KH_Faktor"], 7.5, "KH"), (res2, df_ca, s["CA_Dosis"], s["CA_Brand"], s["CA_Faktor"], 420, "CA")]:
     v, d, delta, up = calculate_aquarium_strict_vB(df, d_set, s["Volumen"], f, target, name == "CA")
