@@ -32,7 +32,7 @@ def load_data(sheet_name):
     except:
         return pd.DataFrame()
 
-# --- SETUP DATEN LADEN ---
+# --- SETUP DATEN LADEN & ROBUST PARSEN ---
 df_setup = load_data("Setup")
 
 setup_values = {
@@ -44,11 +44,18 @@ setup_values = {
 if not df_setup.empty and "Parameter" in df_setup.columns:
     for _, row in df_setup.iterrows():
         p = str(row["Parameter"]).strip()
+        val = row["Wert"]
         if p in setup_values:
-            try:
-                setup_values[p] = float(row["Wert"]) if str(row["Wert"]).replace('.','',1).isdigit() else row["Wert"]
-            except:
-                setup_values[p] = row["Wert"]
+            if p in ["KH_Brand", "CA_Brand"]:
+                setup_values[p] = str(val)
+            else:
+                try:
+                    # Deutsches Zahlenformat mit Komma abfangen
+                    if isinstance(val, str):
+                        val = val.replace('.', '').replace(',', '.')
+                    setup_values[p] = float(val)
+                except:
+                    setup_values[p] = val
 
 s_vol = float(setup_values["Volumen"])
 s_brand_kh = str(setup_values["KH_Brand"])
@@ -92,27 +99,46 @@ with st.sidebar:
         st.success("Setup gespeichert!")
         st.rerun()
 
-# --- DATEN LADEN & BEREINIGUNG ---
+# --- ROBUSTE DATENBEREINIGUNG (DATUM & KOMMAS) ---
 raw_kh = load_data("KH")
 raw_ca = load_data("CA")
 
 def clean_dataframe(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["Datum", "Wert", "Zugabe", "IntervallDosis"])
+    
     d = df.copy()
+    d.columns = [str(c).strip() for c in d.columns]
+    
     if "DataFrame" in d.columns:
         d.rename(columns={"DataFrame": "Datum"}, inplace=True)
-    if "Datum" not in d.columns: d["Datum"] = str(datetime.now().date())
+        
+    if "Datum" not in d.columns: 
+        d["Datum"] = str(datetime.now().date())
     
-    d["Wert"] = pd.to_numeric(d["Wert"], errors='coerce')
-    d["Zugabe"] = pd.to_numeric(d["Zugabe"], errors='coerce').fillna(0.0)
+    # Datum robust parsen (unterstützt DD.MM.YYYY und YYYY-MM-DD ohne Daten zu löschen)
+    date_col = d["Datum"].astype(str).str.strip()
+    parsed_dates = pd.to_datetime(date_col, format='%d.%m.%Y', errors='coerce')
+    mask_nat = parsed_dates.isna()
+    if mask_nat.any():
+        parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], errors='coerce')
+        
+    d["Datum"] = parsed_dates.dt.strftime('%Y-%m-%d')
+    d["Datum"] = d["Datum"].fillna(date_col) # Falls es ein reiner Textstring ist, wird er beibehalten
     
-    # Falls die Spalte IntervallDosis in alten Zeilen fehlt, füllen wir sie mit 0.0 auf
+    # Zahlenkonvertierung (Deutsches Komma in Punkt umwandeln)
+    def to_float_german(series):
+        if series.dtype == object or pd.api.types.is_string_dtype(series):
+            return pd.to_numeric(series.astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce')
+        return pd.to_numeric(series, errors='coerce')
+
+    d["Wert"] = to_float_german(d["Wert"])
+    d["Zugabe"] = to_float_german(d["Zugabe"]).fillna(0.0)
+    
     if "IntervallDosis" not in d.columns:
         d["IntervallDosis"] = 0.0
-    d["IntervallDosis"] = pd.to_numeric(d["IntervallDosis"], errors='coerce').fillna(0.0)
+    d["IntervallDosis"] = to_float_german(d["IntervallDosis"]).fillna(0.0)
     
-    d["Datum"] = d["Datum"].astype(str)
     return d[["Datum", "Wert", "Zugabe", "IntervallDosis"]].reset_index(drop=True)
 
 df_kh = clean_dataframe(raw_kh)
@@ -140,7 +166,6 @@ with c_in1:
             else:
                 new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": today_str, "Wert": None, "Zugabe": float(kh_extra), "IntervallDosis": float(s_kh_d)}])], ignore_index=True)
         else:
-            # Hier speichern wir die AKTUELL im Setup aktive Dosis fest in die Zeile
             new_kh = pd.concat([df_kh, pd.DataFrame([{"Datum": today_str, "Wert": float(kh_val), "Zugabe": float(kh_extra), "IntervallDosis": float(s_kh_d)}])], ignore_index=True)
         
         conn.update(spreadsheet=SHEET_URL, worksheet="KH", data=new_kh)
@@ -164,7 +189,6 @@ with c_in2:
             else:
                 new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": today_str, "Wert": None, "Zugabe": float(ca_extra), "IntervallDosis": float(s_ca_d)}])], ignore_index=True)
         else:
-            # Hier speichern wir die AKTUELL im Setup aktive Dosis fest in die Zeile
             new_ca = pd.concat([df_ca, pd.DataFrame([{"Datum": today_str, "Wert": float(ca_val), "Zugabe": float(ca_extra), "IntervallDosis": float(s_ca_d)}])], ignore_index=True)
         
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_ca)
@@ -177,39 +201,34 @@ st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
 res1, res2 = st.columns(2)
 
-# --- EXAKTE STRIKTE BERECHNUNG ---
 def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
-    df["Datum"] = pd.to_datetime(df["Datum"], errors='coerce')
-    df_m = df.dropna(subset=["Wert"]).sort_values("Datum")
+    # Datum flexibel interpretieren für die Berechnung
+    temp_df = df.copy()
+    temp_df["Datum_dt"] = pd.to_datetime(temp_df["Datum"], errors='coerce')
+    df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).sort_values("Datum_dt")
+    
     if len(df_m) >= 2:
         last, prev = df_m.iloc[-1], df_m.iloc[-2]
-        tage = (last["Datum"] - prev["Datum"]).days
+        tage = (last["Datum_dt"] - prev["Datum_dt"]).days
         if tage > 0:
             f_konz = factor / 10 if is_ca else factor
             
-            # 1. Tatsächlicher Messwert-Trend (positiv = Verbrauch, negativ = Anstieg)
             messwert_trend = (prev["Wert"] - last["Wert"]) / tage
-            
-            # 2. Basis-Dosis Effekt
             dosis_effekt = current_setup_dosis / (vol / 100) / f_konz
             
-            # 3. Manuelle Zugaben im Intervall berücksichtigen
-            zugabe_im_intervall = df[(df["Datum"] > prev["Datum"]) & (df["Datum"] <= last["Datum"])]["Zugabe"].sum()
+            zugabe_im_intervall = temp_df[(temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])]["Zugabe"].sum()
             zugabe_effekt = (zugabe_im_intervall / tage) / (vol / 100) / f_konz
             
-            # Berechnung v_real
             v_real = dosis_effekt + messwert_trend - zugabe_effekt
             
             d_neu = round(v_real * (vol / 100) * f_konz, 1)
             delta = round(d_neu - current_setup_dosis, 1)
             up = round((target_val - last["Wert"]) * (vol / 100) * f_konz, 1)
             
-            # Rückgabe von 5 Werten, um den ValueError zu beheben
             return round(v_real, 3), d_neu, delta, up, last["Wert"]
-    
-    # Rückgabe von 5 Werten (None) wenn keine Berechnung möglich
+            
     return None, None, None, None, None
-    
+
 # --- AUSGABE KH ---
 v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vB(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
@@ -255,7 +274,7 @@ if v_ca is not None:
         st.rerun()
 else:
     res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf neue Messdaten...")
-    
+
 # --- HISTORIE & LIVE-EDIT-FUNKTION ---
 st.divider()
 with st.expander("📊 Historie & Verlauf", expanded=True):
@@ -264,7 +283,9 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
     with h1:
         st.subheader(f"{s_brand_kh} Verlauf & Editor")
         if not df_kh.empty:
-            st.line_chart(df_kh.dropna(subset=["Wert"]).set_index("Datum")["Wert"])
+            df_kh_plot = df_kh.copy()
+            df_kh_plot["Datum_dt"] = pd.to_datetime(df_kh_plot["Datum"], errors='coerce')
+            st.line_chart(df_kh_plot.dropna(subset=["Wert", "Datum_dt"]).set_index("Datum_dt")["Wert"])
             st.dataframe(df_kh, use_container_width=True)
             
             st.markdown("🗑️ **Eintrag löschen**")
@@ -281,7 +302,9 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
     with h2:
         st.subheader(f"{s_brand_ca} Verlauf & Editor")
         if not df_ca.empty:
-            st.line_chart(df_ca.dropna(subset=["Wert"]).set_index("Datum")["Wert"])
+            df_ca_plot = df_ca.copy()
+            df_ca_plot["Datum_dt"] = pd.to_datetime(df_ca_plot["Datum"], errors='coerce')
+            st.line_chart(df_ca_plot.dropna(subset=["Wert", "Datum_dt"]).set_index("Datum_dt")["Wert"])
             st.dataframe(df_ca, use_container_width=True)
             
             st.markdown("🗑️ **Eintrag löschen**")
