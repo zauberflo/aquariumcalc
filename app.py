@@ -202,7 +202,6 @@ st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
 res1, res2 = st.columns(2)
 
 def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
-    # Datum flexibel interpretieren für die Berechnung
     temp_df = df.copy()
     temp_df["Datum_dt"] = pd.to_datetime(temp_df["Datum"], errors='coerce')
     df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).sort_values("Datum_dt")
@@ -213,13 +212,24 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
         if tage > 0:
             f_konz = factor / 10 if is_ca else factor
             
-            messwert_trend = (prev["Wert"] - last["Wert"]) / tage
+            # 1. Was hat die Dosieranlage im Intervall rein Pumpen lassen?
             dosis_effekt = current_setup_dosis / (vol / 100) / f_konz
             
-            zugabe_im_intervall = temp_df[(temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])]["Zugabe"].sum()
-            zugabe_effekt = (zugabe_im_intervall / tage) / (vol / 100) / f_konz
+            # 2. Wie hat sich der Messwert verändert? (Positiv = Wert gestiegen, Negativ = Wert gefallen)
+            messwert_trend = (prev["Wert"] - last["Wert"]) / tage
             
-            v_real = dosis_effekt + messwert_trend - zugabe_effekt
+            # WICHTIG: Manuelle Zugaben während eines Mangels (Unterdosierung) verfälschen den Trend,
+            # wenn man sie einfach abzieht. Wir betrachten hier den reinen Netto-Verbrauch des Beckens:
+            # Verbrauch = Das was reingekommen ist minus das, was der Messwert an Netto-Änderung hergibt.
+            # Wenn der Wert gestiegen ist trotz Unterdosierung, war der Basisverbrauch rein mathematisch 
+            # anders – wir ignorieren daher fehlerhafte manuelle Abzüge bei Unterdosierung.
+            
+            v_real = dosis_effekt + messwert_trend
+            
+            # Sicherheitsnetz: Wenn v_real durch extreme Sprünge negativ oder unsinnig wird, 
+            # fangen wir es ab und nehmen mindestens die aktuelle Dosis als Basis.
+            if v_real < 0.05:
+                v_real = dosis_effekt
             
             d_neu = round(v_real * (vol / 100) * f_konz, 1)
             delta = round(d_neu - current_setup_dosis, 1)
