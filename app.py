@@ -212,23 +212,30 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
         if tage > 0:
             f_konz = factor / 10 if is_ca else factor
             
-            # 1. Was hat die Dosieranlage im Intervall rein Pumpen lassen?
+            # Was hat die Dosieranlage rein theoretisch Basis-Mäßig reingepumpt?
             dosis_effekt = current_setup_dosis / (vol / 100) / f_konz
             
-            # 2. Wie hat sich der Messwert verändert? (Positiv = Wert gestiegen, Negativ = Wert gefallen)
-            messwert_trend = (prev["Wert"] - last["Wert"]) / tage
+            # WICHTIG: Wir berechnen, wie viel KH durch die manuelle Zugabe im Intervall dazugekommen ist!
+            zugabe_im_intervall = last.get("Zugabe", 0.0)
+            zugabe_in_kh = (zugabe_im_intervall / (vol / 100) / f_konz)
             
-            # WICHTIG: Manuelle Zugaben während eines Mangels (Unterdosierung) verfälschen den Trend,
-            # wenn man sie einfach abzieht. Wir betrachten hier den reinen Netto-Verbrauch des Beckens:
-            # Verbrauch = Das was reingekommen ist minus das, was der Messwert an Netto-Änderung hergibt.
-            # Wenn der Wert gestiegen ist trotz Unterdosierung, war der Basisverbrauch rein mathematisch 
-            # anders – wir ignorieren daher fehlerhafte manuelle Abzüge bei Unterdosierung.
+            # Der theoretische Startwert inklusive der manuellen Zugabe:
+            # (Wo müsste das Becken stehen, wenn es keinen Verbrauch gäbe?)
+            theoretischer_startwert = prev["Wert"] + zugabe_in_kh
             
-            v_real = dosis_effekt + messwert_trend
+            # Der echte Verbrauch ist die Differenz zwischen dem theoretischen Wert (nach der Zugabe) 
+            # und dem heutigen tatsächlichen Messwert, heruntergebrochen auf die Tage!
+            netto_aenderung = theoretischer_startwert - last["Wert"]
             
-            # Sicherheitsnetz: Wenn v_real durch extreme Sprünge negativ oder unsinnig wird, 
-            # fangen wir es ab und nehmen mindestens die aktuelle Dosis als Basis.
-            if v_real < 0.05:
+            if netto_aenderung < 0:
+                # Wert ist trotz allem gestiegen -> Becken hat weniger verbraucht als Anlage + Zugabe
+                v_real = dosis_effekt + (netto_aenderung / tage)
+            else:
+                # Normaler Fall: Wert ist gesunken -> Verbrauch = Basisdosis + das, was zusätzlich gefehlt hat
+                v_real = dosis_effekt + (netto_aenderung / tage)
+            
+            # Sicherheitsnetz, damit es nie negativ oder unsinnig wird
+            if v_real < 0.1:
                 v_real = dosis_effekt
             
             d_neu = round(v_real * (vol / 100) * f_konz, 1)
