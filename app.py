@@ -212,29 +212,26 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
         if tage > 0:
             f_konz = factor / 10 if is_ca else factor
             
-            # Was hat die Dosieranlage rein theoretisch Basis-Mäßig reingepumpt?
+            # 1. Was hat die Dosieranlage im Intervall Basis-Mäßig reingepumpt?
             dosis_effekt = current_setup_dosis / (vol / 100) / f_konz
             
-            # WICHTIG: Wir berechnen, wie viel KH durch die manuelle Zugabe im Intervall dazugekommen ist!
-            zugabe_im_intervall = last.get("Zugabe", 0.0)
+            # 2. ALLE manuellen Zugaben aufsummieren, die genau in diesem Zeitraum 
+            # (zwischen dem vorletzten und letzten Messwert) stattgefunden haben!
+            mask_intervall = (temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])
+            zugabe_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
+            
             zugabe_in_kh = (zugabe_im_intervall / (vol / 100) / f_konz)
             
-            # Der theoretische Startwert inklusive der manuellen Zugabe:
-            # (Wo müsste das Becken stehen, wenn es keinen Verbrauch gäbe?)
+            # 3. Der theoretische Startwert inklusive der manuellen Zugabe vom 21.08.
             theoretischer_startwert = prev["Wert"] + zugabe_in_kh
             
-            # Der echte Verbrauch ist die Differenz zwischen dem theoretischen Wert (nach der Zugabe) 
-            # und dem heutigen tatsächlichen Messwert, heruntergebrochen auf die Tage!
+            # 4. Netto-Änderung: Wo theoretisch nach der Zugabe vs. wo heute real gemessen?
             netto_aenderung = theoretischer_startwert - last["Wert"]
             
-            if netto_aenderung < 0:
-                # Wert ist trotz allem gestiegen -> Becken hat weniger verbraucht als Anlage + Zugabe
-                v_real = dosis_effekt + (netto_aenderung / tage)
-            else:
-                # Normaler Fall: Wert ist gesunken -> Verbrauch = Basisdosis + das, was zusätzlich gefehlt hat
-                v_real = dosis_effekt + (netto_aenderung / tage)
+            # Echter Verbrauch = Basisdosis der Anlage + die Netto-Änderung heruntergebrochen auf die Tage
+            v_real = dosis_effekt + (netto_aenderung / tage)
             
-            # Sicherheitsnetz, damit es nie negativ oder unsinnig wird
+            # Sicherheitsnetz, damit es nicht negativ wird
             if v_real < 0.1:
                 v_real = dosis_effekt
             
