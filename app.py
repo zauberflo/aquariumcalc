@@ -243,6 +243,7 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
                 v_real = dosis_effekt
             
             d_neu = round(v_real * (vol / 100) * f_konz, 1)
+            # Hier nehmen wir jetzt zwingend die aktuelle Sidebar-Dosis (s_kh_d) für den Vergleich!
             delta = round(d_neu - current_setup_dosis, 1)
             up = round((target_val - last["Wert"]) * (vol / 100) * f_konz, 1)
             
