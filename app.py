@@ -193,12 +193,12 @@ with c_in2:
         st.success("Ca-Eintrag erfolgreich gespeichert!")
         st.rerun()
 
-# --- EXAKTE STRIKTE BERECHNUNG ---
+# --- EXAKTE BERECHNUNG MIT HISTORISCHER INTERVALL-DOSIS ---
 st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
 res1, res2 = st.columns(2)
 
-def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
+def calculate_aquarium_with_history(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
     temp_df = df.copy()
     
     date_col = temp_df["Datum"].astype(str).str.strip()
@@ -217,8 +217,12 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
         if tage > 0:
             f_konz = factor / 10 if is_ca else factor
             
-            intervall_dosis = prev["IntervallDosis"] if prev["IntervallDosis"] > 0 else current_setup_dosis
-            dosis_effekt = intervall_dosis / (vol / 100) / f_konz
+            # 💡 HIER GREIFT WIEDER DIE LOGIK: 
+            # Wenn im Vorwert eine IntervallDosis hinterlegt ist (> 0), nutze diese. 
+            # Falls dort 0 steht (z.B. bei ganz alten Einträgen), nimm fallback-mäßig die aktuelle Setup-Dosis.
+            historische_dosis = prev["IntervallDosis"] if (pd.notna(prev["IntervallDosis"]) and prev["IntervallDosis"] > 0) else current_setup_dosis
+            
+            dosis_effekt = historische_dosis / (vol / 100) / f_konz
             
             mask_intervall = (temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])
             zugabe_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
@@ -241,12 +245,10 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
     return None, None, None, None, None
     
 # --- AUSGABE KH ---
-v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vB(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
+v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_with_history(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
     res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
-    res1.info(f"💡 **Info:** Nach einer Dosisänderung kann die berechnete Entwicklung "
-              f"erst nach der nächsten Messung wieder präzise sein, "
-              f"da der aktuelle Verlauf noch auf der alten Dosis basiert.")
+    res1.info(f"💡 **Info:** Berechnung basiert auf der im vorherigen Eintrag gespeicherten Intervall-Dosis.")
     res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
     if up_kh > 0:
         res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
@@ -264,12 +266,10 @@ else:
     res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
 
 # --- AUSGABE CA ---
-v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_strict_vB(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
+v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_with_history(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
 if v_ca is not None:
     res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
-    res2.info(f"💡 **Info:** Nach einer Dosisänderung kann die berechnete Entwicklung "
-              f"erst nach der nächsten Messung wieder präzise sein, "
-              f"da der aktuelle Verlauf noch auf der alten Dosis basiert.")
+    res2.info(f"💡 **Info:** Berechnung basiert auf der im vorherigen Eintrag gespeicherten Intervall-Dosis.")
     res2.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_ca} mg/l/Tag**")
     if up_ca > 0:
         res2.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_ca} ml** extra für Wunschwert ({target_ca} mg/l).")
@@ -277,7 +277,7 @@ if v_ca is not None:
     if res2.button("✅ Neue Tagesdosis für Ca aktivieren"):
         new_setup_ca = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
-            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_ca_f, s_ca_f, setup_values["KH_Verbrauch"], v_ca]
+            "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], v_ca]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_ca)
         st.cache_data.clear()
