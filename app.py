@@ -203,7 +203,15 @@ res1, res2 = st.columns(2)
 
 def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
     temp_df = df.copy()
-    temp_df["Datum_dt"] = pd.to_datetime(temp_df["Datum"], errors='coerce')
+    
+    # Datum absolut fehlerfrei parsen (unterstützt deutsches Format explizit)
+    date_col = temp_df["Datum"].astype(str).str.strip()
+    parsed_dates = pd.to_datetime(date_col, format='%d.%m.%Y', errors='coerce')
+    mask_nat = parsed_dates.isna()
+    if mask_nat.any():
+        parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], errors='coerce')
+    temp_df["Datum_dt"] = parsed_dates
+    
     df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).sort_values("Datum_dt")
     
     if len(df_m) >= 2:
@@ -212,26 +220,22 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
         if tage > 0:
             f_konz = factor / 10 if is_ca else factor
             
-            # 1. Was hat die Dosieranlage im Intervall Basis-Mäßig reingepumpt?
+            # Basis-Dosis Effekt der Anlage
             dosis_effekt = current_setup_dosis / (vol / 100) / f_konz
             
-            # 2. ALLE manuellen Zugaben aufsummieren, die genau in diesem Zeitraum 
-            # (zwischen dem vorletzten und letzten Messwert) stattgefunden haben!
+            # ALLE manuellen Zugaben im exakten Intervall aufsummieren
             mask_intervall = (temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])
             zugabe_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
             
             zugabe_in_kh = (zugabe_im_intervall / (vol / 100) / f_konz)
             
-            # 3. Der theoretische Startwert inklusive der manuellen Zugabe vom 21.08.
+            # Theoretischer Startwert inkl. manueller Zugabe
             theoretischer_startwert = prev["Wert"] + zugabe_in_kh
             
-            # 4. Netto-Änderung: Wo theoretisch nach der Zugabe vs. wo heute real gemessen?
+            # Netto-Verbrauch im Intervall
             netto_aenderung = theoretischer_startwert - last["Wert"]
-            
-            # Echter Verbrauch = Basisdosis der Anlage + die Netto-Änderung heruntergebrochen auf die Tage
             v_real = dosis_effekt + (netto_aenderung / tage)
             
-            # Sicherheitsnetz, damit es nicht negativ wird
             if v_real < 0.1:
                 v_real = dosis_effekt
             
@@ -242,7 +246,6 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
             return round(v_real, 3), d_neu, delta, up, last["Wert"]
             
     return None, None, None, None, None
-
 # --- AUSGABE KH ---
 v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_strict_vB(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
