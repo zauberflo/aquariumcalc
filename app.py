@@ -215,35 +215,33 @@ def calculate_aquarium_with_history(df, current_setup_dosis, vol, factor, target
         tage = (last["Datum_dt"] - prev["Datum_dt"]).days
         
         if tage > 0:
-            f_konz = factor / 10 if is_ca else factor
+            # Korrektur für Ca: Faktor gilt pro 10 mg/l, d.h. pro 1 mg/l ist es factor / 10
+            f_konz = factor / 10.0 if is_ca else factor
             
-            # 💡 HIER GREIFT WIEDER DIE LOGIK: 
-            # Wenn im Vorwert eine IntervallDosis hinterlegt ist (> 0), nutze diese. 
-            # Falls dort 0 steht (z.B. bei ganz alten Einträgen), nimm fallback-mäßig die aktuelle Setup-Dosis.
             historische_dosis = prev["IntervallDosis"] if (pd.notna(prev["IntervallDosis"]) and prev["IntervallDosis"] > 0) else current_setup_dosis
             
-            dosis_effekt = historische_dosis / (vol / 100) / f_konz
+            dosis_effekt = historische_dosis / (vol / 100.0) / f_konz
             
             mask_intervall = (temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])
             zugabe_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
             
-            zugabe_in_kh = (zugabe_im_intervall / (vol / 100) / f_konz)
+            zugabe_in_kh = (zugabe_im_intervall / (vol / 100.0) / f_konz)
             theoretischer_startwert = prev["Wert"] + zugabe_in_kh
             
             netto_aenderung = theoretischer_startwert - last["Wert"]
             v_real = dosis_effekt + (netto_aenderung / tage)
             
-            if v_real < 0.1:
+            if v_real < 0.001:
                 v_real = dosis_effekt
-            
-            d_neu = round(v_real * (vol / 100) * f_konz, 1)
+                
+            d_neu = round(v_real * (vol / 100.0) * f_konz, 1)
             delta = round(d_neu - current_setup_dosis, 1)
-            up = round((target_val - last["Wert"]) * (vol / 100) * f_konz, 1)
+            up = round((target_val - last["Wert"]) * (vol / 100.0) * f_konz, 1)
             
             return round(v_real, 3), d_neu, delta, up, last["Wert"]
             
     return None, None, None, None, None
-    
+
 # --- AUSGABE KH ---
 v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_with_history(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
