@@ -74,7 +74,7 @@ with st.sidebar:
     s_brand_ca = st.text_input("Marke Ca-Lösung", value=s_brand_ca)
     
     st.divider()
-    s_subheader_dos = st.subheader("Aktuelle Dosierung (ml/Tag)")
+    st.subheader("Aktuelle Dosierung (ml/Tag)")
     s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=s_kh_d, format="%.1f")
     s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=s_ca_d, format="%.1f")
     
@@ -193,7 +193,7 @@ with c_in2:
         st.success("Ca-Eintrag erfolgreich gespeichert!")
         st.rerun()
 
-# --- STRENG EXKLUSIVE BERECHNUNG NUR MIT DEN LETZTEN 2 MESSWERTEN + ZWISCHENZUGABEN ---
+# --- MATHEMATISCH KORREKTE BERECHNUNG (LETZTE 2 MESSWERTE + KORREKTE ZWISCHENZUGABEN) ---
 st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzten 2 Messpunkte)")
 res1, res2 = st.columns(2)
@@ -208,13 +208,10 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
         parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%d.%m.%Y', errors='coerce')
     temp_df["Datum_dt"] = parsed_dates
     
-    # 1. Filtere NUR Zeilen heraus, die einen gültigen, echten Messwert haben (für die Bestimmung der letzten 2 Punkte)
+    # 1. Nur Zeilen mit echtem Messwert für die letzten 2 Punkte
     df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).copy()
-    
-    # 2. Sortiere chronologisch aufsteigend
     df_m = df_m.sort_values("Datum_dt").reset_index(drop=True)
     
-    # 3. Wir brauchen mindestens 2 Messpunkte
     if len(df_m) >= 2:
         prev_row = df_m.iloc[-2]
         last_row = df_m.iloc[-1]
@@ -227,27 +224,30 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
         if tage > 0:
             f_konz = factor / 10.0 if is_ca else factor
             
-            # Effekt der aktuellen Setup-Dosis pro Tag auf den Wert
-            dosis_effekt = current_setup_dosis / (vol / 100.0) / f_konz
+            # 1. Was bewirkt die automatische Setup-Dosis pro Tag in Einheiten (dKH / mg/l)?
+            dosis_effekt_pro_tag = current_setup_dosis / (vol / 100.0) / f_konz
             
-            # KORREKTUR: Alle manuellen Extra-Zugaben im Zeitraum exakt zwischen vorletztem und letztem Messpunkt aufsummieren 
-            # (inklusive am selben Tag wie der letzte Messwert getätigte, aber exklusive des vorletzten Tages selbst)
+            # 2. Summe aller manuellen Extra-Zugaben (in ml) im exakten Zeitraum zwischen den Messungen
             mask_intervall = (temp_df["Datum_dt"] > d_prev) & (temp_df["Datum_dt"] <= d_last)
-            zugabe_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
+            zugabe_ml_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
             
-            # Umrechnung der manuellen Extra-Zugabe in KH/Ca-Punkte
-            zugabe_in_einheiten = (zugabe_im_intervall / (vol / 100.0) / f_konz)
+            # Umrechnung der Extra-ml in Einheiten (dKH / mg/l)
+            zugabe_in_einheiten = zugabe_ml_im_intervall / (vol / 100.0) / f_konz
             
-            # Theoretischer Wert vor Verbrauch (Vorheriger Messwert + automatische Dosierung im Zeitraum + manuelle Extra-Zugaben)
-            # Da 'dosis_effekt * tage' bereits den automatischen Teil abdeckt:
-            theoretischer_startwert = prev_row["Wert"] + (dosis_effekt * tage) + zugabe_in_einheiten
+            # 3. Netto-Abfall durch Verbrauch berechnen:
+            # Startpunkt + Automatische Zufuhr + Manuelle Zufuhr = Was theoretisch da sein MÜSSTE ohne Verbrauch
+            theoretischer_startwert = prev_row["Wert"] + (dosis_effekt_pro_tag * tage) + zugabe_in_einheiten
             
-            netto_aenderung = theoretischer_startwert - last_row["Wert"]
-            v_real = dosis_effekt + (netto_aenderung / tage)
+            # Der tatsächliche Verbrauch (Verlust) im Zeitraum
+            gesamt_verlust = theoretischer_startwert - last_row["Wert"]
             
-            if v_real < 0.001:
-                v_real = dosis_effekt
+            # Verbrauch pro Tag insgesamt
+            v_real = gesamt_verlust / tage
+            
+            if v_real < 0:
+                v_real = 0.0  # Falls Wert gestiegen ist, kein negativer Verbrauch
                 
+            # Neue empfohlene Tagesdosis in ml
             d_neu = round(v_real * (vol / 100.0) * f_konz, 1)
             delta = round(d_neu - current_setup_dosis, 1)
             up = round((target_val - last_row["Wert"]) * (vol / 100.0) * f_konz, 1)
