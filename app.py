@@ -193,12 +193,12 @@ with c_in2:
         st.success("Ca-Eintrag erfolgreich gespeichert!")
         st.rerun()
 
-# --- EXAKTE BERECHNUNG MIT HISTORISCHER INTERVALL-DOSIS ---
+# --- STRENG EXKLUSIVE BERECHNUNG NUR MIT DEN LETZTEN 2 MESSWERTEN ---
 st.divider()
-st.header("⏱️ Aktuelle Entwicklung (Letzte Messung)")
+st.header("⏱️ Aktuelle Entwicklung (Letzten 2 Messpunkte)")
 res1, res2 = st.columns(2)
 
-def calculate_aquarium_with_history(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
+def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
     temp_df = df.copy()
     
     date_col = temp_df["Datum"].astype(str).str.strip()
@@ -208,19 +208,27 @@ def calculate_aquarium_with_history(df, current_setup_dosis, vol, factor, target
         parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%d.%m.%Y', errors='coerce')
     temp_df["Datum_dt"] = parsed_dates
     
-    df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).sort_values("Datum_dt").reset_index(drop=True)
+    # 1. Filtere NUR Zeilen heraus, die einen gültigen, echten Messwert haben
+    df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).copy()
     
+    # 2. Sortiere chronologisch aufsteigend
+    df_m = df_m.sort_values("Datum_dt").reset_index(drop=True)
+    
+    # 3. Wir brauchen mindestens 2 Messpunkte
     if len(df_m) >= 2:
-        last, prev = df_m.iloc[-1], df_m.iloc[-2]
+        # Nimm strikt die letzten 2 Zeilen des gefilterten DataFrames
+        prev = df_m.iloc[-2]
+        last = df_m.iloc[-1]
+        
         tage = (last["Datum_dt"] - prev["Datum_dt"]).days
         
         if tage > 0:
             f_konz = factor / 10.0 if is_ca else factor
             
-            historische_dosis = prev["IntervallDosis"] if (pd.notna(prev["IntervallDosis"]) and prev["IntervallDosis"] > 0) else current_setup_dosis
+            # Effekt der aktuellen Setup-Dosis pro Tag auf den Wert
+            dosis_effekt = current_setup_dosis / (vol / 100.0) / f_konz
             
-            dosis_effekt = historische_dosis / (vol / 100.0) / f_konz
-            
+            # Summe manueller Extra-Zugaben exakt im Zeitraum zwischen diesen beiden Messungen
             mask_intervall = (temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])
             zugabe_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
             
@@ -237,16 +245,16 @@ def calculate_aquarium_with_history(df, current_setup_dosis, vol, factor, target
             delta = round(d_neu - current_setup_dosis, 1)
             up = round((target_val - last["Wert"]) * (vol / 100.0) * f_konz, 1)
             
-            return round(v_real, 3), d_neu, delta, up, last["Wert"]
+            return round(v_real, 3), d_neu, delta, up, last["Wert"], prev["Datum"], last["Datum"]
             
-    return None, None, None, None, None
+    return None, None, None, None, None, None, None
 
 # --- AUSGABE KH ---
-v_kh, d_kh, delta_kh, up_kh, last_kh = calculate_aquarium_with_history(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
+v_kh, d_kh, delta_kh, up_kh, last_kh, d_prev_kh, d_last_kh = calculate_aquarium_strict_last_two(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
     res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
-    res1.info(f"💡 **Info:** Berechnung basiert auf der im vorherigen Eintrag gespeicherten Intervall-Dosis.")
-    res1.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_kh} dKH/Tag**")
+    res1.info(f"💡 **Vergleich:** Von **{d_prev_kh}** bis **{d_last_kh}** (exakt die letzten 2 Messungen).")
+    res1.write(f"📉 Realer Gesamtverbrauch: **{v_kh} dKH/Tag**")
     if up_kh > 0:
         res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
     
@@ -260,14 +268,14 @@ if v_kh is not None:
         st.success(f"Dosis von {d_kh} ml dauerhaft im Setup aktiviert!")
         st.rerun()
 else:
-    res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten (Tage > 0 erforderlich)...")
+    res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf mind. 2 Messpunkte...")
 
 # --- AUSGABE CA ---
-v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_with_history(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
+v_ca, d_ca, delta_ca, up_ca, last_ca, d_prev_ca, d_last_ca = calculate_aquarium_strict_last_two(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
 if v_ca is not None:
     res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
-    res2.info(f"💡 **Info:** Berechnung basiert auf der im vorherigen Eintrag gespeicherten Intervall-Dosis.")
-    res2.write(f"📉 Realer Gesamtverbrauch im Intervall: **{v_ca} mg/l/Tag**")
+    res2.info(f"💡 **Vergleich:** Von **{d_prev_ca}** bis **{d_last_ca}** (exakt die letzten 2 Messungen).")
+    res2.write(f"📉 Realer Gesamtverbrauch: **{v_ca} mg/l/Tag**")
     if up_ca > 0:
         res2.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_ca} ml** extra für Wunschwert ({target_ca} mg/l).")
     
@@ -281,7 +289,7 @@ if v_ca is not None:
         st.success(f"Dosis von {d_ca} ml dauerhaft im Setup aktiviert!")
         st.rerun()
 else:
-    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf neue Messdaten (Tage > 0 erforderlich)...")
+    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf mind. 2 Messpunkte...")
 
 # --- HISTORIE & LIVE-EDIT-FUNKTION ---
 st.divider()
