@@ -50,7 +50,6 @@ if not df_setup.empty and "Parameter" in df_setup.columns:
                 setup_values[p] = str(val)
             else:
                 try:
-                    # Deutsches Zahlenformat mit Komma abfangen
                     if isinstance(val, str):
                         val = val.replace('.', '').replace(',', '.')
                     setup_values[p] = float(val)
@@ -116,7 +115,6 @@ def clean_dataframe(df):
     if "Datum" not in d.columns: 
         d["Datum"] = str(datetime.now().date())
     
-    # Datum robust parsen (unterstützt DD.MM.YYYY und YYYY-MM-DD ohne Daten zu löschen)
     date_col = d["Datum"].astype(str).str.strip()
     parsed_dates = pd.to_datetime(date_col, format='%d.%m.%Y', errors='coerce')
     mask_nat = parsed_dates.isna()
@@ -124,9 +122,8 @@ def clean_dataframe(df):
         parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], errors='coerce')
         
     d["Datum"] = parsed_dates.dt.strftime('%Y-%m-%d')
-    d["Datum"] = d["Datum"].fillna(date_col) # Falls es ein reiner Textstring ist, wird er beibehalten
+    d["Datum"] = d["Datum"].fillna(date_col)
     
-    # Zahlenkonvertierung (Deutsches Komma in Punkt umwandeln)
     def to_float_german(series):
         if series.dtype == object or pd.api.types.is_string_dtype(series):
             return pd.to_numeric(series.astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce')
@@ -204,7 +201,6 @@ res1, res2 = st.columns(2)
 def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
     temp_df = df.copy()
     
-    # 1. Datum absolut fehlerfrei parsen und erzwingen
     date_col = temp_df["Datum"].astype(str).str.strip()
     parsed_dates = pd.to_datetime(date_col, format='%Y-%m-%d', errors='coerce')
     mask_nat = parsed_dates.isna()
@@ -212,30 +208,24 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
         parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%d.%m.%Y', errors='coerce')
     temp_df["Datum_dt"] = parsed_dates
     
-    # Nur Zeilen mit gültigem Datum und Wert behalten & strikt chronologisch sortieren!
     df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).sort_values("Datum_dt").reset_index(drop=True)
     
     if len(df_m) >= 2:
-        # Die echten letzten beiden chronologischen Messungen holen
         last, prev = df_m.iloc[-1], df_m.iloc[-2]
         tage = (last["Datum_dt"] - prev["Datum_dt"]).days
         
         if tage > 0:
             f_konz = factor / 10 if is_ca else factor
             
-            # Basis-Dosis Effekt der Anlage
-            dosis_effekt = current_setup_dosis / (vol / 100) / f_konz
+            intervall_dosis = prev["IntervallDosis"] if prev["IntervallDosis"] > 0 else current_setup_dosis
+            dosis_effekt = intervall_dosis / (vol / 100) / f_konz
             
-            # ALLE manuellen Zugaben im exakten Intervall (zwischen vorletzter und letzter Messung) aufsummieren
             mask_intervall = (temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])
             zugabe_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
             
             zugabe_in_kh = (zugabe_im_intervall / (vol / 100) / f_konz)
-            
-            # Theoretischer Startwert inkl. manueller Zugabe
             theoretischer_startwert = prev["Wert"] + zugabe_in_kh
             
-            # Netto-Verbrauch im Intervall
             netto_aenderung = theoretischer_startwert - last["Wert"]
             v_real = dosis_effekt + (netto_aenderung / tage)
             
@@ -243,7 +233,6 @@ def calculate_aquarium_strict_vB(df, current_setup_dosis, vol, factor, target_va
                 v_real = dosis_effekt
             
             d_neu = round(v_real * (vol / 100) * f_konz, 1)
-            # Hier nehmen wir jetzt zwingend die aktuelle Sidebar-Dosis (s_kh_d) für den Vergleich!
             delta = round(d_neu - current_setup_dosis, 1)
             up = round((target_val - last["Wert"]) * (vol / 100) * f_konz, 1)
             
