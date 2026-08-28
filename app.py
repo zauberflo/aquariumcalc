@@ -74,7 +74,7 @@ with st.sidebar:
     s_brand_ca = st.text_input("Marke Ca-Lösung", value=s_brand_ca)
     
     st.divider()
-    st.subheader("Aktuelle Dosierung (ml/Tag)")
+    s_subheader_dos = st.subheader("Aktuelle Dosierung (ml/Tag)")
     s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=s_kh_d, format="%.1f")
     s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=s_ca_d, format="%.1f")
     
@@ -193,7 +193,7 @@ with c_in2:
         st.success("Ca-Eintrag erfolgreich gespeichert!")
         st.rerun()
 
-# --- STRENG EXKLUSIVE BERECHNUNG NUR MIT DEN LETZTEN 2 MESSWERTEN ---
+# --- STRENG EXKLUSIVE BERECHNUNG NUR MIT DEN LETZTEN 2 MESSWERTEN + ZWISCHENZUGABEN ---
 st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzten 2 Messpunkte)")
 res1, res2 = st.columns(2)
@@ -208,7 +208,7 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
         parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%d.%m.%Y', errors='coerce')
     temp_df["Datum_dt"] = parsed_dates
     
-    # 1. Filtere NUR Zeilen heraus, die einen gültigen, echten Messwert haben
+    # 1. Filtere NUR Zeilen heraus, die einen gültigen, echten Messwert haben (für die Bestimmung der letzten 2 Punkte)
     df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).copy()
     
     # 2. Sortiere chronologisch aufsteigend
@@ -216,11 +216,13 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
     
     # 3. Wir brauchen mindestens 2 Messpunkte
     if len(df_m) >= 2:
-        # Nimm strikt die letzten 2 Zeilen des gefilterten DataFrames
-        prev = df_m.iloc[-2]
-        last = df_m.iloc[-1]
+        prev_row = df_m.iloc[-2]
+        last_row = df_m.iloc[-1]
         
-        tage = (last["Datum_dt"] - prev["Datum_dt"]).days
+        d_prev = prev_row["Datum_dt"]
+        d_last = last_row["Datum_dt"]
+        
+        tage = (d_last - d_prev).days
         
         if tage > 0:
             f_konz = factor / 10.0 if is_ca else factor
@@ -228,14 +230,19 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
             # Effekt der aktuellen Setup-Dosis pro Tag auf den Wert
             dosis_effekt = current_setup_dosis / (vol / 100.0) / f_konz
             
-            # Summe manueller Extra-Zugaben exakt im Zeitraum zwischen diesen beiden Messungen
-            mask_intervall = (temp_df["Datum_dt"] > prev["Datum_dt"]) & (temp_df["Datum_dt"] <= last["Datum_dt"])
+            # KORREKTUR: Alle manuellen Extra-Zugaben im Zeitraum exakt zwischen vorletztem und letztem Messpunkt aufsummieren 
+            # (inklusive am selben Tag wie der letzte Messwert getätigte, aber exklusive des vorletzten Tages selbst)
+            mask_intervall = (temp_df["Datum_dt"] > d_prev) & (temp_df["Datum_dt"] <= d_last)
             zugabe_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
             
-            zugabe_in_kh = (zugabe_im_intervall / (vol / 100.0) / f_konz)
-            theoretischer_startwert = prev["Wert"] + zugabe_in_kh
+            # Umrechnung der manuellen Extra-Zugabe in KH/Ca-Punkte
+            zugabe_in_einheiten = (zugabe_im_intervall / (vol / 100.0) / f_konz)
             
-            netto_aenderung = theoretischer_startwert - last["Wert"]
+            # Theoretischer Wert vor Verbrauch (Vorheriger Messwert + automatische Dosierung im Zeitraum + manuelle Extra-Zugaben)
+            # Da 'dosis_effekt * tage' bereits den automatischen Teil abdeckt:
+            theoretischer_startwert = prev_row["Wert"] + (dosis_effekt * tage) + zugabe_in_einheiten
+            
+            netto_aenderung = theoretischer_startwert - last_row["Wert"]
             v_real = dosis_effekt + (netto_aenderung / tage)
             
             if v_real < 0.001:
@@ -243,9 +250,9 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
                 
             d_neu = round(v_real * (vol / 100.0) * f_konz, 1)
             delta = round(d_neu - current_setup_dosis, 1)
-            up = round((target_val - last["Wert"]) * (vol / 100.0) * f_konz, 1)
+            up = round((target_val - last_row["Wert"]) * (vol / 100.0) * f_konz, 1)
             
-            return round(v_real, 3), d_neu, delta, up, last["Wert"], prev["Datum"], last["Datum"]
+            return round(v_real, 3), d_neu, delta, up, last_row["Wert"], prev_row["Datum"], last_row["Datum"]
             
     return None, None, None, None, None, None, None
 
@@ -284,7 +291,7 @@ if v_ca is not None:
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], v_ca]
         })
-        conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_ca)
+        conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_setup_ca)
         st.cache_data.clear()
         st.success(f"Dosis von {d_ca} ml dauerhaft im Setup aktiviert!")
         st.rerun()
