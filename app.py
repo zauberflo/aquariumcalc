@@ -74,7 +74,7 @@ with st.sidebar:
     s_brand_ca = st.text_input("Marke Ca-Lösung", value=s_brand_ca)
     
     st.divider()
-    st.subheader("Aktuelle Dosierung (ml/Tag)")
+    s_subheader_dos = st.subheader("Aktuelle Dosierung (ml/Tag)")
     s_kh_d = st.number_input(f"Dosis {s_brand_kh}", value=s_kh_d, format="%.1f")
     s_ca_d = st.number_input(f"Dosis {s_brand_ca}", value=s_ca_d, format="%.1f")
     
@@ -119,7 +119,7 @@ def clean_dataframe(df):
     parsed_dates = pd.to_datetime(date_col, format='%d.%m.%Y', errors='coerce')
     mask_nat = parsed_dates.isna()
     if mask_nat.any():
-        parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], errors='coerce')
+        parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%d.%m.%Y', errors='coerce')
         
     d["Datum"] = parsed_dates.dt.strftime('%Y-%m-%d')
     d["Datum"] = d["Datum"].fillna(date_col)
@@ -193,12 +193,12 @@ with c_in2:
         st.success("Ca-Eintrag erfolgreich gespeichert!")
         st.rerun()
 
-# --- MATHEMATISCH KORREKTE BERECHNUNG (LETZTE 2 MESSWERTE + KORREKTE ZWISCHENZUGABEN) ---
+# --- EINFACHE & LOGISCHE BERECHNUNG (LETZTE 2 MESSWERTE + DIREKTE WERT-ANHEBUNG) ---
 st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzten 2 Messpunkte)")
 res1, res2 = st.columns(2)
 
-def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
+def calculate_aquarium_simple(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
     temp_df = df.copy()
     
     date_col = temp_df["Datum"].astype(str).str.strip()
@@ -208,7 +208,7 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
         parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%d.%m.%Y', errors='coerce')
     temp_df["Datum_dt"] = parsed_dates
     
-    # 1. Nur Zeilen mit echtem Messwert für die letzten 2 Punkte
+    # Nur Zeilen mit echtem Messwert für die letzten 2 Punkte
     df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).copy()
     df_m = df_m.sort_values("Datum_dt").reset_index(drop=True)
     
@@ -224,30 +224,25 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
         if tage > 0:
             f_konz = factor / 10.0 if is_ca else factor
             
-            # 1. Was bewirkt die automatische Setup-Dosis pro Tag in Einheiten (dKH / mg/l)?
-            dosis_effekt_pro_tag = current_setup_dosis / (vol / 100.0) / f_konz
+            # Ausgangswert ist der Messwert des Vorgängers
+            effektiver_startwert = prev_row["Wert"]
             
-            # 2. Summe aller manuellen Extra-Zugaben (in ml) im exakten Zeitraum zwischen den Messungen
-            mask_intervall = (temp_df["Datum_dt"] > d_prev) & (temp_df["Datum_dt"] <= d_last)
-            zugabe_ml_im_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
+            # Prüfen, ob am Tag des Vorgängers (oder im direkten Anschluss) eine manuelle Zugabe gemacht wurde,
+            # die den Startwert sofort erhöht hat. Wir rechnen die ml der Zugabe direkt in Einheiten um und addieren sie.
+            mask_zugabe_start = (temp_df["Datum_dt"] == d_prev)
+            ml_zugabe_start = temp_df.loc[mask_zugabe_start, "Zugabe"].sum()
+            if ml_zugabe_start > 0:
+                effektiver_startwert += ml_zugabe_start / (vol / 100.0) / f_konz
             
-            # Umrechnung der Extra-ml in Einheiten (dKH / mg/l)
-            zugabe_in_einheiten = zugabe_ml_im_intervall / (vol / 100.0) / f_konz
-            
-            # 3. Netto-Abfall durch Verbrauch berechnen:
-            # Startpunkt + Automatische Zufuhr + Manuelle Zufuhr = Was theoretisch da sein MÜSSTE ohne Verbrauch
-            theoretischer_startwert = prev_row["Wert"] + (dosis_effekt_pro_tag * tage) + zugabe_in_einheiten
-            
-            # Der tatsächliche Verbrauch (Verlust) im Zeitraum
-            gesamt_verlust = theoretischer_startwert - last_row["Wert"]
-            
-            # Verbrauch pro Tag insgesamt
-            v_real = gesamt_verlust / tage
-            
-            if v_real < 0:
-                v_real = 0.0  # Falls Wert gestiegen ist, kein negativer Verbrauch
+            # Netto-Verlust = (Erhöhter Startwert) - (Letzter Messwert)
+            netto_verlust = effektiver_startwert - last_row["Wert"]
+            if netto_verlust < 0:
+                netto_verlust = 0.0
                 
-            # Neue empfohlene Tagesdosis in ml
+            # Realer Verbrauch pro Tag
+            v_real = netto_verlust / tage
+            
+            # Neue Tagesdosis in ml
             d_neu = round(v_real * (vol / 100.0) * f_konz, 1)
             delta = round(d_neu - current_setup_dosis, 1)
             up = round((target_val - last_row["Wert"]) * (vol / 100.0) * f_konz, 1)
@@ -257,7 +252,7 @@ def calculate_aquarium_strict_last_two(df, current_setup_dosis, vol, factor, tar
     return None, None, None, None, None, None, None
 
 # --- AUSGABE KH ---
-v_kh, d_kh, delta_kh, up_kh, last_kh, d_prev_kh, d_last_kh = calculate_aquarium_strict_last_two(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
+v_kh, d_kh, delta_kh, up_kh, last_kh, d_prev_kh, d_last_kh = calculate_aquarium_simple(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if v_kh is not None:
     res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
     res1.info(f"💡 **Vergleich:** Von **{d_prev_kh}** bis **{d_last_kh}** (exakt die letzten 2 Messungen).")
@@ -278,7 +273,7 @@ else:
     res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf mind. 2 Messpunkte...")
 
 # --- AUSGABE CA ---
-v_ca, d_ca, delta_ca, up_ca, last_ca, d_prev_ca, d_last_ca = calculate_aquarium_strict_last_two(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
+v_ca, d_ca, delta_ca, up_ca, last_ca, d_prev_ca, d_last_ca = calculate_aquarium_simple(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
 if v_ca is not None:
     res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
     res2.info(f"💡 **Vergleich:** Von **{d_prev_ca}** bis **{d_last_ca}** (exakt die letzten 2 Messungen).")
