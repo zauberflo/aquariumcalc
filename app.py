@@ -215,7 +215,6 @@ def calculate_aquarium_with_history(df, current_setup_dosis, vol, factor, target
         tage = (last["Datum_dt"] - prev["Datum_dt"]).days
         
         if tage > 0:
-            # Korrektur für Ca: Faktor gilt pro 10 mg/l, d.h. pro 1 mg/l ist es factor / 10
             f_konz = factor / 10.0 if is_ca else factor
             
             historische_dosis = prev["IntervallDosis"] if (pd.notna(prev["IntervallDosis"]) and prev["IntervallDosis"] > 0) else current_setup_dosis
@@ -261,7 +260,7 @@ if v_kh is not None:
         st.success(f"Dosis von {d_kh} ml dauerhaft im Setup aktiviert!")
         st.rerun()
 else:
-    res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten...")
+    res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf neue Messdaten (Tage > 0 erforderlich)...")
 
 # --- AUSGABE CA ---
 v_ca, d_ca, delta_ca, up_ca, last_ca = calculate_aquarium_with_history(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
@@ -282,7 +281,7 @@ if v_ca is not None:
         st.success(f"Dosis von {d_ca} ml dauerhaft im Setup aktiviert!")
         st.rerun()
 else:
-    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf neue Messdaten...")
+    res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf neue Messdaten (Tage > 0 erforderlich)...")
 
 # --- HISTORIE & LIVE-EDIT-FUNKTION ---
 st.divider()
