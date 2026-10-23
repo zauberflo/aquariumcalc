@@ -98,7 +98,7 @@ with st.sidebar:
         st.success("Setup gespeichert!")
         st.rerun()
 
-# --- ROBUSTE DATENBEREINIGUNG (DATUM & KOMMAS) ---
+# --- ROBUSTE DATENBEREINIGUNG ---
 raw_kh = load_data("KH")
 raw_ca = load_data("CA")
 
@@ -119,7 +119,7 @@ def clean_dataframe(df):
     parsed_dates = pd.to_datetime(date_col, format='%d.%m.%Y', errors='coerce')
     mask_nat = parsed_dates.isna()
     if mask_nat.any():
-        parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%d.%m.%Y', errors='coerce')
+        parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%Y-%m-%d', errors='coerce')
         
     d["Datum"] = parsed_dates.dt.strftime('%Y-%m-%d')
     d["Datum"] = d["Datum"].fillna(date_col)
@@ -193,23 +193,19 @@ with c_in2:
         st.success("Ca-Eintrag erfolgreich gespeichert!")
         st.rerun()
 
-# --- BERECHNUNG MIT EINBEZIEHUNG DER AKTUELLEN DOSIERUNG ---
+# --- DIE SAUBERE & EXAKTE BERECHNUNGSLOGIK ---
 st.divider()
 st.header("⏱️ Aktuelle Entwicklung (Letzten 2 Messpunkte)")
 res1, res2 = st.columns(2)
 
-def calculate_aquarium_true_total(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
+def calculate_aquarium_perfect(df, current_setup_dosis, vol, factor, target_val, is_ca=False):
     temp_df = df.copy()
     
     date_col = temp_df["Datum"].astype(str).str.strip()
     parsed_dates = pd.to_datetime(date_col, format='%Y-%m-%d', errors='coerce')
-    mask_nat = parsed_dates.isna()
-    if mask_nat.any():
-        parsed_dates[mask_nat] = pd.to_datetime(date_col[mask_nat], format='%d.%m.%Y', errors='coerce')
     temp_df["Datum_dt"] = parsed_dates
     
-    df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).copy()
-    df_m = df_m.sort_values("Datum_dt").reset_index(drop=True)
+    df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).sort_values("Datum_dt").reset_index(drop=True)
     
     if len(df_m) >= 2:
         prev_row = df_m.iloc[-2]
@@ -223,72 +219,77 @@ def calculate_aquarium_true_total(df, current_setup_dosis, vol, factor, target_v
         if tage > 0:
             f_konz = factor / 10.0 if is_ca else factor
             
-            # 1. Effektiver Startwert nach eventueller manueller Extra-Zugabe am Start-Tag
-            effektiver_startwert = prev_row["Wert"]
-            mask_zugabe_start = (temp_df["Datum_dt"] == d_prev)
-            ml_zugabe_start = temp_df.loc[mask_zugabe_start, "Zugabe"].sum()
+            # 1. Extra-Zugabe am Start-Tag (sofortige Werterhöhung berücksichtigen)
+            mask_intervall = (temp_df["Datum_dt"] >= d_prev) & (temp_df["Datum_dt"] <= d_last)
+            ml_extra_intervall = temp_df.loc[mask_intervall, "Zugabe"].sum()
+            extra_einheiten = ml_extra_intervall / (vol / 100.0) / f_konz
             
-            if ml_zugabe_start > 0:
-                erhoehung = ml_zugabe_start / (vol / 100.0) / f_konz
-                effektiver_startwert += erhoehung  # z.B. 7,3 + 0,5 = 7,8
+            effektiver_startwert = prev_row["Wert"] + extra_einheiten
             
-            # 2. Einheiten, die durch den Abfall verloren gingen:
-            verlust_einheiten = effektiver_startwert - last_row["Wert"]
-            if verlust_einheiten < 0:
-                verlust_einheiten = 0.0
+            # 2. Netto-Verlust im Intervall (Startwert nach Zugabe minus letzter Messwert)
+            abfall_einheiten = effektiver_startwert - last_row["Wert"]
+            if abfall_einheiten < 0:
+                abfall_einheiten = 0.0
                 
-            # 3. Das ist der reale Gesamtbedarf in ml für den gesamten Zeitraum:
-            # (Was über Dosieranlage reinging) + (Was das Becken zusätzlich an Einheiten verloren hat, umgerechnet in ml)
-            ml_durch_pumpe_gesamt = current_setup_dosis * tage
-            ml_durch_verlust = verlust_einheiten * (vol / 100.0) * f_konz
+            # 3. Was hat die Dosieranlage in den Tagen insgesamt reingeklotzt?
+            pumpe_gesamt_ml = current_setup_dosis * tage
             
-            gesamter_bedarf_ml = ml_durch_pumpe_gesamt + ml_durch_verlust
+            # 4. Was fehlte an ml insgesamt? (Pumpe + zusätzlicher Abfall in ml)
+            ml_abfall = abfall_einheiten * (vol / 100.0) * f_konz
+            gesamt_bedarf_ml = pumpe_gesamt_ml + ml_abfall
             
-            # 4. Neue exakte Tagesdosis in ml
-            d_neu = round(gesamter_bedarf_ml / tage, 1)
+            # 5. Neue exakte Tagesdosis
+            d_neu = round(gesamt_bedarf_ml / tage, 1)
             delta = round(d_neu - current_setup_dosis, 1)
-            up = round((target_val - last_row["Wert"]) * (vol / 100.0) * f_konz, 1)
             
-            return round(d_neu, 1), delta, up, round(effektiver_startwert, 2), last_row["Wert"], prev_row["Datum"], last_row["Datum"]
+            # 6. Einzelerhöhung (Einmal-Dosis) um auf den exakten Wunschwert zu kommen
+            fehlender_wert = target_val - last_row["Wert"]
+            up = round(fehlender_werte * (vol / 100.0) * f_konz, 1) if fehlender_wert > 0 else 0.0
+            
+            return d_neu, delta, up, round(effektiver_startwert, 2), last_row["Wert"], prev_row["Datum"], last_row["Datum"]
             
     return None, None, None, None, None, None, None
 
 # --- AUSGABE KH ---
-d_kh, delta_kh, up_kh, start_kh_eff, last_kh, d_prev_kh, d_last_kh = calculate_aquarium_true_total(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
+d_kh, delta_kh, up_kh, start_kh_eff, last_kh, d_prev_kh, d_last_kh = calculate_aquarium_perfect(df_kh, s_kh_d, s_vol, s_kh_f, target_kh, is_ca=False)
 if d_kh is not None:
     res1.metric(f"Neue Tagesdosis {s_brand_kh} (Wert halten)", f"{d_kh} ml", f"{delta_kh} ml vs. bisher")
-    res1.info(f"💡 **Basis:** Start bei **{d_prev_kh}** (effektiv **{start_kh_eff} dKH** nach Zugabe) bis **{d_last_kh}**.")
+    res1.info(f"💡 **Basis:** Start bei **{d_prev_kh}** (effektiv **{start_kh_eff} dKH** nach Zugabe) bis **{d_last_kh}** (Endwert: **{last_kh} dKH**).")
     if up_kh > 0:
-        res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra für Wunschwert ({target_kh} dKH).")
+        res1.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_kh} ml** extra, um deinen Wunschwert ({target_kh} dKH) sofort zu erreichen.")
+    else:
+        res1.success(f"🎯 Dein Wert ist im grünen Bereich – kein zusätzlicher Einzelschub nötig!")
     
-    if res1.button("✅ Neue Tagesdosis für KH aktivieren"):
+    if res1.button("✅ Neue Tagesdosis für KH dauerhaft aktivieren"):
         new_setup_kh = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, d_kh, s_ca_d, s_kh_f, s_ca_f, d_kh, setup_values["CA_Verbrauch"]]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="Setup", data=new_setup_kh)
         st.cache_data.clear()
-        st.success(f"Dosis von {d_kh} ml dauerhaft im Setup aktiviert!")
+        st.success(f"Dosis von {d_kh} ml erfolgreich im Setup gespeichert!")
         st.rerun()
 else:
     res1.metric(f"Aktuelle Dosierung {s_brand_kh}", f"{s_kh_d} ml", "Warte auf mind. 2 Messpunkte...")
 
 # --- AUSGABE CA ---
-d_ca, delta_ca, up_ca, start_ca_eff, last_ca, d_prev_ca, d_last_ca = calculate_aquarium_true_total(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
+d_ca, delta_ca, up_ca, start_ca_eff, last_ca, d_prev_ca, d_last_ca = calculate_aquarium_perfect(df_ca, s_ca_d, s_vol, s_ca_f, target_ca, is_ca=True)
 if d_ca is not None:
     res2.metric(f"Neue Tagesdosis {s_brand_ca} (Wert halten)", f"{d_ca} ml", f"{delta_ca} ml vs. bisher")
-    res2.info(f"💡 **Basis:** Start bei **{d_prev_ca}** (effektiv **{start_ca_eff} mg/l** nach Zugabe) bis **{d_last_ca}**.")
+    res2.info(f"💡 **Basis:** Start bei **{d_prev_ca}** (effektiv **{start_ca_eff} mg/l** nach Zugabe) bis **{d_last_ca}** (Endwert: **{last_ca} mg/l**).")
     if up_ca > 0:
-        res2.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_ca} ml** extra für Wunschwert ({target_ca} mg/l).")
+        res2.warning(f"🔺 **Empfohlene Einzelerhöhung:** Dosiere einmalig **{up_ca} ml** extra, um deinen Wunschwert ({target_ca} mg/l) sofort zu erreichen.")
+    else:
+        res2.success(f"🎯 Dein Wert ist im grünen Bereich – kein zusätzlicher Einzelschub nötig!")
     
-    if res2.button("✅ Neue Tagesdosis für Ca aktivieren"):
+    if res2.button("✅ Neue Tagesdosis für Ca dauerhaft aktivieren"):
         new_setup_ca = pd.DataFrame({
             "Parameter": ["Volumen", "KH_Brand", "CA_Brand", "KH_Dosis", "CA_Dosis", "KH_Faktor", "CA_Faktor", "KH_Verbrauch", "CA_Verbrauch"],
             "Wert": [s_vol, s_brand_kh, s_brand_ca, s_kh_d, d_ca, s_kh_f, s_ca_f, setup_values["KH_Verbrauch"], d_ca]
         })
         conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_setup_ca)
         st.cache_data.clear()
-        st.success(f"Dosis von {d_ca} ml dauerhaft im Setup aktiviert!")
+        st.success(f"Dosis von {d_ca} ml erfolgreich im Setup gespeichert!")
         st.rerun()
 else:
     res2.metric(f"Aktuelle Dosierung {s_brand_ca}", f"{s_ca_d} ml", "Warte auf mind. 2 Messpunkte...")
@@ -331,7 +332,3 @@ with st.expander("📊 Historie & Verlauf", expanded=True):
             
             if st.button("❌ Ausgewählten Ca-Eintrag löschen", type="secondary"):
                 new_df_ca = df_ca[df_ca["Datum"] != selected_ca_date]
-                conn.update(spreadsheet=SHEET_URL, worksheet="CA", data=new_df_ca)
-                st.cache_data.clear()
-                st.success(f"Eintrag vom {selected_ca_date} wurde gelöscht!")
-                st.rerun()
