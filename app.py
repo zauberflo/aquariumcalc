@@ -136,6 +136,24 @@ with st.sidebar:
         st.success("Setup gespeichert!")
         st.rerun()
 
+# --- SETUP: PLAUSIBILITÄT & DIAGNOSE ---
+setup_warnungen = []
+if not (50 <= s_vol <= 3000):
+    setup_warnungen.append(f"Beckenvolumen {s_vol:g} L wirkt unplausibel.")
+if not (2 <= s_kh_f <= 40):
+    setup_warnungen.append(f"KH-Faktor {s_kh_f:g} wirkt unplausibel (typisch ca. 5–25 ml pro +1 dKH / 100 L).")
+if not (2 <= s_ca_f <= 40):
+    setup_warnungen.append(f"Ca-Faktor {s_ca_f:g} wirkt unplausibel (typisch ca. 5–25 ml pro +10 mg/l / 100 L).")
+if setup_warnungen:
+    st.error("⚠️ **Setup-Werte prüfen, Berechnungen wären sonst falsch:**\n\n- " + "\n- ".join(setup_warnungen)
+             + "\n\nKorrigiere sie in der Sidebar und klicke auf „Setup manuell speichern“.")
+
+with st.sidebar.expander("🛠️ Setup-Diagnose"):
+    st.caption("Roh aus Google Sheet gelesen:")
+    st.dataframe(df_setup.astype(str) if not df_setup.empty else df_setup, use_container_width=True)
+    st.caption("Daraus verwendet:")
+    st.json({k: setup_values[k] for k in SETUP_KEYS})
+
 # --- ROBUSTE DATENBEREINIGUNG ---
 raw_kh, kh_ok = load_data("KH")
 raw_ca, ca_ok = load_data("CA")
@@ -232,7 +250,7 @@ with c_in1:
 with c_in2:
     st.subheader(f"🧪 {s_brand_ca} Messung & Zugabe")
     only_extra_ca = st.checkbox("Nur manuelle Extra-Zugabe buchen (ohne neuen Messwert)", key="only_c")
-    ca_val = st.number_input("Messwert (mg/l)", step=1.0, format="%.0f", key="cin", disabled=only_extra_ca, value=420.0)
+    ca_val = st.number_input("Messwert (mg/l)", step=0.5, format="%.1f", key="cin", disabled=only_extra_ca, value=420.0)
     ca_extra = st.number_input("Manuelle Extra-Zugabe JETZT (ml)", value=0.0, min_value=0.0, step=5.0, key="c_extra")
 
     if st.button("💾 Ca Speichern"):
@@ -262,7 +280,8 @@ def calculate_aquarium(df, current_setup_dosis, vol, factor, target_val, is_ca=F
     temp_df = df.copy()
     temp_df["Datum_dt"] = pd.to_datetime(temp_df["Datum"].astype(str).str.strip(),
                                          format="%Y-%m-%d", errors="coerce")
-    df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).sort_values("Datum_dt").reset_index(drop=True)
+    df_m = temp_df.dropna(subset=["Wert", "Datum_dt"]).sort_values("Datum_dt", kind="stable")
+    df_m = df_m.drop_duplicates(subset="Datum_dt", keep="last").reset_index(drop=True)  # mehrere Messungen/Tag -> letzte
 
     if len(df_m) < 2 or vol <= 0:
         return None
@@ -315,6 +334,8 @@ def calculate_aquarium(df, current_setup_dosis, vol, factor, target_val, is_ca=F
         "start_eff": round(effektiver_startwert, 2), "last": float(last_row["Wert"]),
         "d_prev": prev_row["Datum"], "d_last": last_row["Datum"],
         "tage": tage, "verbrauch_tag": round(verbrauch_ml / tage, 1),
+        "ml_pro_einheit": round(ml_pro_einheit, 2), "pumpe_tag": dosis_intervall,
+        "ml_extra": ml_extra, "aenderung": round(aenderung, 2), "vol": vol, "factor": factor,
     }
 
 
@@ -336,6 +357,14 @@ def render_result(col, r, brand, unit, target, current_dose, key):
         col.warning(txt)
     else:
         col.success("🎯 Wunschwert erreicht oder überschritten – kein zusätzlicher Einzelschub nötig!")
+    with col.expander("🔍 Rechenweg"):
+        st.write(
+            f"- Volumen: **{r['vol']:g} L**, Faktor: **{r['factor']:g}** ml → **{r['ml_pro_einheit']} ml pro 1 {unit}** im ganzen Becken\n"
+            f"- Pumpe im Intervall: **{r['pumpe_tag']:g} ml/Tag × {r['tage']} Tage**\n"
+            f"- Extra-Zugaben im Intervall: **{r['ml_extra']:g} ml**\n"
+            f"- Wertänderung: **{r['aenderung']:+g} {unit}**\n"
+            f"- Einmalgabe = (Wunsch − Messwert) × {r['ml_pro_einheit']} ml (max. {r['max_schritt']:g} {unit})"
+        )
     return col.button(f"✅ Neue Tagesdosis für {key} dauerhaft aktivieren")
 
 
